@@ -45,6 +45,19 @@ window.addEventListener('keydown', (e) => {
   held[c] = true;
 });
 window.addEventListener('keyup', (e) => { const c = codeOf(e); if (c) held[c] = false; });
+// Optional mouse for player 1: left click fires (B1), right click throws (B2), the cursor aims.
+// It only takes over once the mouse moves; pressing B1/B2 on the keyboard hands aim back.
+const ptr = { on: false };
+const mouseCode = (e) => (e.button === 0 ? 'P1_1' : e.button === 2 ? 'P1_2' : undefined);
+window.addEventListener('mousemove', () => { ptr.on = true; });
+window.addEventListener('mousedown', (e) => {
+  ptr.on = true; const c = mouseCode(e); if (!c) return;
+  if (!held[c]) pressed[c] = true;
+  held[c] = true;
+});
+window.addEventListener('mouseup', (e) => { const c = mouseCode(e); if (c) held[c] = false; });
+window.addEventListener('contextmenu', (e) => e.preventDefault());
+window.addEventListener('keydown', (e) => { const c = codeOf(e); if (c === 'P1_1' || c === 'P1_2') ptr.on = false; });
 const take = (c) => { const p = pressed[c]; pressed[c] = false; return p; };
 // The same control on either player's panel (menus accept both).
 const any = (c) => take('P1_' + c) | take('P2_' + c);
@@ -78,6 +91,11 @@ const TUNE = {
   // Unaware enemies: half-width of their cone of view (radians), how far it reaches, how far
   // gunfire is heard, and how close button 3 takes one down.
   fov: 0.7, coneR: 170, hearR: 230, takeR: 32,
+  // Detection grows with the floor (each *Step per floor, up to its max). Besides the cone of view,
+  // an unaware enemy hears a player who lingers inside earR even from behind: earMs of that
+  // fills his ear meter. A quick stab from behind (takeR) is still faster than that.
+  fovStep: 0.04, fovMax: 0.98, coneStep: 14, coneMax: 270, hearStep: 14, hearMax: 340,
+  earR: 54, earStep: 4, earMax: 84, earMs: 700, earMsStep: 55, earMsMin: 320,
   // Enemy reaction time is the main difficulty number; each *Step applies per floor.
   reactMs: 520, reactStep: 50, reactMin: 220,
   eFireMs: 900, eFireStep: 60, eFireMin: 450,
@@ -88,6 +106,9 @@ const TUNE = {
   callMs: 2400, callStep: 150, callMin: 1300,
   shooters: 2, shootersMax: 6, extraDoor: 0.35,
   horde: 6, hordeStep: 2, hordeAgain: 3, hordeEveryMs: 260, hordeDuo: 1.5,
+  // Siege floors (every siegeEvery-th): a thug walks in from the street every siegeMs (faster each
+  // floor, never below siegeMin), at most siegeCap at once, until every room is clear.
+  siegeEvery: 3, siegeStartMs: 5000, siegeMs: 6500, siegeStep: 250, siegeMin: 3200, siegeCap: 3,
   throwSpeed: 430, fuseMs: 850, grenades: 3, nadeMax: 5, friction: 0.0022, blindMs: 900,
   // Pickups dropped by a cleared room, and the shotgun one of them gives.
   pickMs: 9000, shotMs: 9000, shotFireMs: 330, pellets: 5, pelletSpread: 0.11,
@@ -284,8 +305,8 @@ class How extends Phaser.Scene {
     const g = this.add.graphics(), put = (x, y, k, r, sc) => this.add.image(x, y, k).setScale(sc || 1.8).setRotation(r || 0);
     label(this, W / 2, 50, 'CÓMO SE JUEGA', 40, '#39e6ff').setShadow(0, 0, '#39e6ff', 16, true, true);
     [
-      ['PATADA', 'CAMINA CONTRA LA PUERTA: ENTRAS CON RUIDO Y TODA LA SALA QUEDA SORPRENDIDA UN INSTANTE.'],
-      ['SIGILO: B3', 'AL LADO DE LA PUERTA, B3 LA ABRE DESPACIO. FUERA DE SU CONO NO TE VEN. B3 POR LA ESPALDA: DERRIBO SILENCIOSO.'],
+      ['PATADA', 'CAMINA CONTRA LA PUERTA: ENTRAS CON RUIDO, LA SALA QUEDA SORPRENDIDA UN INSTANTE Y EL VIGÍA PIDE REFUERZOS YA.'],
+      ['SIGILO: B3', 'AL LADO DE LA PUERTA, B3 LA ABRE DESPACIO. FUERA DE SU CONO NO TE VEN, PERO DE CERCA TE OYEN. B3 POR LA ESPALDA: DERRIBO SILENCIOSO.'],
       ['EL VIGÍA', 'ELIMINA AL AMARILLO ANTES DE QUE LLENE SU BARRA. SI LLAMA, SUENA LA ALARMA Y LLEGA LA HORDA.'],
     ].forEach(([h, s], i) => {
       const x = 140 + i * 260;
@@ -303,6 +324,7 @@ class How extends Phaser.Scene {
     put(715, 150, 'e2', 2.7, 1.5); put(735, 195, 'e2', 3.1, 1.5); put(710, 228, 'e2', 3.4, 1.5);
     label(this, W / 2, 440, 'B1 DISPARA (MANTENER: FIJA LA MIRA)     B2 GRANADA: TAMBIÉN TE AFECTA A TI', 15, '#9fb6d6');
     label(this, W / 2, 466, 'NO LASTIMES A LOS REHENES     SALA DESPEJADA: RECOGE LO QUE DEJA', 15, '#9fb6d6');
+    label(this, W / 2, 492, 'RATÓN (OPCIONAL): APUNTA CON EL CURSOR   CLIC IZQ: DISPARA   CLIC DER: GRANADA', 15, '#8dff4a');
     const p = label(this, W / 2, 530, 'PULSA START', 32, '#ff4455');
     this.tweens.add({ targets: p, alpha: 0.15, duration: 500, yoyo: true, repeat: -1 });
     crt(this);
@@ -318,7 +340,7 @@ class Play extends Phaser.Scene {
   constructor() { super('play'); }
 
   create() {
-    flush();
+    flush(); this.input.setDefaultCursor('crosshair');
     this.grid = new Uint8Array(COLS * ROWS);
     this.flow = new Int16Array(COLS * ROWS);
     this.score = 0; this.floor = 0; this.mult = 1; this.over = 0; this.overT = 0;
@@ -373,6 +395,46 @@ class Play extends Phaser.Scene {
     tone(this, 660, 150, 'square', 0.07, 990);
   }
 
+  // ---- Between floors: a short card with what changes, so a harder floor is never a surprise ----
+  cardLines(f) {
+    const U = TUNE, L = [], Y = '#ffe14a';
+    if (f === 2) L.push(['NUEVO', 'REHENES: NO LOS LASTIMES (-' + U.hostPen + '). SALVARLOS DA +' + U.hostSave + '.', Y]);
+    if (f === 2) L.push(['NUEVO', 'PESADOS: AGUANTAN ' + U.heavyHp + ' BALAS Y DISPARAN RÁFAGAS DE TRES.', Y]);
+    if (f % U.siegeEvery === 0) L.push([f === U.siegeEvery ? 'NUEVO' : 'OJO', 'ASEDIO: LA HORDA LLEGA SIN PARAR HASTA QUE DESPEJES TODAS LAS SALAS. NO HAY PISO EN SILENCIO.', '#ff4455']);
+    if (f > 2 && f < 10 && f % 2) L.push(['MÁS', 'TIRADORES: HASTA ' + Math.min(U.shootersMax, U.shooters + ((f - 1) >> 1) + 1) + ' POR SALA.', '#ffb020']);
+    if (f > 2 && f < 6) L.push(['MÁS', 'PESADOS EN MÁS SALAS (' + Math.min(100, Math.round(U.heavyP * (f - 1) * 100)) + '%).', '#ffb020']);
+    const h = Math.round((U.horde + U.hordeStep * f) * (this.ps[1].in ? U.hordeDuo : 1));
+    L.push(['HORDA', 'SI SUENA LA ALARMA: ' + h + ' ATACANTES, MÁS RÁPIDOS QUE ANTES.', '#ff7a7a']);
+    if (f < 10) L.push(['VIGILANCIA', 'VEN MÁS LEJOS Y TE OYEN DESDE MÁS CERCA.', '#9fb6d6']);
+    if (f < 8) L.push(['REFLEJOS', 'REACCIONAN Y DISPARAN MÁS RÁPIDO. EL VIGÍA LLAMA ANTES.', '#9fb6d6']);
+    if (f >= 10) L.push(['AL LÍMITE', 'LA DIFICULTAD YA NO SUBE. SOLO LA HORDA SIGUE CRECIENDO.', '#9fb6d6']);
+    return L.slice(0, 5);
+  }
+  showCard() {
+    const f = this.floor + 1, o = [], add = (x) => { o.push(x); return x; };
+    add(this.add.rectangle(0, 0, W, H, 0x05080f, 0.97).setOrigin(0).setDepth(20));
+    const siege = f % TUNE.siegeEvery === 0, col = siege ? '#ff4455' : '#39e6ff';
+    add(label(this, W / 2, 64, 'PISO ' + f, 56, col)).setDepth(21).setShadow(0, 0, col, 16, true, true);
+    add(label(this, W / 2, 116, 'LO QUE CAMBIA', 18, '#9fb6d6')).setDepth(21);
+    this.cardLines(f).forEach(([tag, txt, c], i) => {
+      const y = 150 + i * 74;
+      add(this.add.rectangle(60, y, 680, 62, 0x14213b).setOrigin(0).setDepth(21).setStrokeStyle(2, 0x2b4a7a));
+      add(label(this, 128, y + 31, tag, 18, c)).setDepth(22);
+      add(this.add.text(200, y + 31, txt, { fontFamily: FONT, fontSize: '17px', color: '#e8f1ff', fontStyle: 'bold', wordWrap: { width: 520 } }).setOrigin(0, 0.5).setDepth(22));
+    });
+    this.cardP = add(label(this, W / 2, 566, 'PULSA START', 26, '#ff4455')).setDepth(22);
+    this.card = o; this.cardT = 0; flush();
+    tone(this, 520, 120, 'triangle', 0.06, 780);
+  }
+  cardTick(rdt) {
+    this.cardT += rdt;
+    this.cardP.setAlpha(0.45 + 0.55 * Math.abs(Math.sin(this.cardT / 300)));
+    const go = any('1') | take('START1') | take('START2');
+    if (!((go && this.cardT > 700) || this.cardT > 15000)) return;
+    this.card.forEach((x) => x.destroy()); this.card = null; flush();
+    this.nextFloor();
+  }
+
   // ---- Floor ----
   nextFloor() {
     const f = ++this.floor, s = f - 1;
@@ -380,11 +442,17 @@ class Play extends Phaser.Scene {
     this.enemies = []; this.bullets = []; this.nades = []; this.rings = []; this.picks = [];
     this.decal.clear();
     this.alarm = false; this.pending = 0; this.spawnT = 0; this.floorT = 0; this.cleared = 0; this.flowT = 0;
+    this.siege = f % TUNE.siegeEvery === 0; this.sieged = false; this.siegeT = 0;
     this.quiet = 0; this.seen.fill(0); this.ajar = [];
     this.react = Math.max(TUNE.reactMin, TUNE.reactMs - TUNE.reactStep * s);
     this.eFire = Math.max(TUNE.eFireMin, TUNE.eFireMs - TUNE.eFireStep * s);
     this.eBullet = TUNE.eBullet + TUNE.eBulletStep * s;
     this.callMs = Math.max(TUNE.callMin, TUNE.callMs - TUNE.callStep * s);
+    this.fov = Math.min(TUNE.fovMax, TUNE.fov + TUNE.fovStep * s);
+    this.coneR = Math.min(TUNE.coneMax, TUNE.coneR + TUNE.coneStep * s);
+    this.hearR = Math.min(TUNE.hearMax, TUNE.hearR + TUNE.hearStep * s);
+    this.earR = Math.min(TUNE.earMax, TUNE.earR + TUNE.earStep * s);
+    this.earMs = Math.max(TUNE.earMsMin, TUNE.earMs - TUNE.earMsStep * s);
     // A new floor gives everyone one hit back and puts a downed partner back on his feet.
     for (const p of this.ps) if (p.in) {
       if (s) p.hp = Math.min(TUNE.hp, p.hp + 1);
@@ -392,7 +460,7 @@ class Play extends Phaser.Scene {
       p.img.setVisible(true); p.light.setVisible(true);
     }
     this.build();
-    this.say('PISO ' + f, '#39e6ff');
+    this.say('PISO ' + f + (this.siege ? ' · ASEDIO' : ''), this.siege ? '#ff4455' : '#39e6ff');
     tone(this, 440, 140, 'square', 0.06, 880);
     if (!s) {
       const h = this.hint = label(this, W / 2, 346, 'CAMINA CONTRA UNA PUERTA PARA PATEARLA\nO QUÉDATE A SU LADO Y PULSA B3 PARA ABRIRLA EN SILENCIO', 18, '#ffb020').setDepth(11);
@@ -566,6 +634,7 @@ class Play extends Phaser.Scene {
     let woke = false;
     for (const r of [d.a, d.b]) if (this.wake(r)) woke = true;
     if (woke && !this.alarm) this.slow = TUNE.slowMs;
+    this.loud(d.x, d.y, this.hearR); // a kicked door is heard by every unaware enemy nearby
     this.drawMap();
   }
   // The quiet entry: the door swings open without a sound and the room stays dark. Nobody inside
@@ -595,6 +664,8 @@ class Play extends Phaser.Scene {
       e.img.setVisible(true);
       e.stun = this.alarm ? 0 : TUNE.surpriseMs; // an alerted room is not surprised
       e.t = this.react;
+      // Breaking a door is loud: the lookout starts radioing at once, seen or not. Kill him in time.
+      if (e.k === 1 && !e.seen) { e.seen = true; this.pop(e.x, e.y - 30, '¡PIDE REFUERZOS!', '#ffe14a', 18); }
     }
     return true;
   }
@@ -748,7 +819,7 @@ class Play extends Phaser.Scene {
     tone(this, K.kill ? 110 : 1900, 420, K.kill ? 'sawtooth' : 'sine', 0.14, K.kill ? 30 : 500);
     noise(this, K.kill ? 600 : 350, 0.3, K.kill ? 700 : 2500);
     this.sparks.explode(K.kill ? 60 : 26, x, y);
-    this.loud(x, y, TUNE.hearR * 1.3);
+    this.loud(x, y, this.hearR * 1.3);
     if (K.kill) this.decal.fillStyle(0x000000, 0.5).fillCircle(x, y, K.r * 0.5);
     else if (!K.kb) this.cameras.main.flash(90, 255, 255, 255);
     if (K.door) for (const d of this.doors) if (Math.hypot(d.x - x, d.y - y) < K.r) this.openDoor(d);
@@ -792,12 +863,13 @@ class Play extends Phaser.Scene {
     const s = dt / 1000, c = p.c, fx = this.fx, K = KITS[p.k], fire = held[c + '1'], thr = take(c + '2');
     const mx = (held[c + 'R'] ? 1 : 0) - (held[c + 'L'] ? 1 : 0), my = (held[c + 'D'] ? 1 : 0) - (held[c + 'U'] ? 1 : 0);
     if (mx || my) {
-      if (!fire) p.ang = Math.atan2(my, mx); // holding fire locks the aim: strafe
+      if (!fire && !(p.i === 0 && ptr.on)) p.ang = Math.atan2(my, mx); // holding fire locks the aim: strafe (the mouse aims freely)
       const sp = (TUNE.speed * (p.slow > 0 ? 0.45 : 1) * s) / Math.hypot(mx, my);
       this.hitD = null;
       this.move(p, mx * sp, my * sp, 7);
       if (this.hitD) this.openDoor(this.hitD); // the kick: walk into a door and it bursts open
     }
+    if (p.i === 0 && ptr.on) { const q = this.input.activePointer; p.ang = Math.atan2(q.y - p.y, q.x - p.x); }
     // Button 3: take down an unaware enemy within reach without a sound; or, standing by a
     // closed door, open it without waking the room.
     let b3 = take(c + '3');
@@ -844,7 +916,7 @@ class Play extends Phaser.Scene {
     if ((p.cd -= dt) <= 0 && fire) {
       const n = p.shot > 0 ? TUNE.pellets : 1;
       p.cd = n > 1 ? TUNE.shotFireMs : TUNE.fireMs;
-      this.loud(p.x, p.y, TUNE.hearR); // a shot ends the quiet
+      this.loud(p.x, p.y, this.hearR); // a shot ends the quiet
       for (let i = 0; i < n; i++) this.shoot(p.x + ca * 10, p.y + sa * 10, aim + (i - (n - 1) / 2) * TUNE.pelletSpread, TUNE.bullet, false);
       noise(this, n > 1 ? 160 : 70, n > 1 ? 0.22 : 0.12, n > 1 ? 1800 : 4500);
       tone(this, n > 1 ? 200 : 700, 40, 'square', 0.03, 120);
@@ -867,6 +939,7 @@ class Play extends Phaser.Scene {
 
   update(time, delta) {
     const rdt = Math.min(delta, 50), fx = this.fx.clear(), E = this.enemies, ps = this.ps;
+    if (this.card) return this.cardTick(rdt);
     if (this.over) return this.overTick(rdt);
     if (!ps[1].in && take('START2')) this.join();
     this.tip.setVisible(false);
@@ -903,6 +976,13 @@ class Play extends Phaser.Scene {
     }
 
     // ---- Horde: enters by the street door, one thug at a time ----
+    // Siege: a steady trickle from the street while any room is still uncleared.
+    if (this.siege && this.cleared < 5 && this.floorT > TUNE.siegeStartMs && (this.siegeT -= dt) <= 0) {
+      this.siegeT = Math.max(TUNE.siegeMin, TUNE.siegeMs - TUNE.siegeStep * this.floor) / (ps[1].in ? 1.4 : 1);
+      if (E.filter((e) => e.k === 2).length < TUNE.siegeCap + ((this.floor / TUNE.siegeEvery) | 0)) {
+        this.spawn(2, -1, this.sx + Phaser.Math.Between(-12, 12), this.sy); this.sieged = true;
+      }
+    }
     if (this.pending > 0 && (this.spawnT -= dt) <= 0) {
       this.spawnT = TUNE.hordeEveryMs; this.pending--;
       this.spawn(2, -1, this.sx + Phaser.Math.Between(-12, 12), this.sy);
@@ -919,9 +999,14 @@ class Play extends Phaser.Scene {
         // Unaware in a quietly opened room. He looks slowly from side to side and only notices a
         // player inside his cone of view: behind him you are safe. (A hostage notices anyone.)
         if (e.k !== 4) { e.ang = e.a0 + Math.sin(time / 900 + e.a0 * 9) * 0.7; e.img.setRotation(e.ang); }
-        if (!ps.some((p) => p.in && !p.down && Math.hypot(p.x - e.x, p.y - e.y) < (e.k === 4 ? TUNE.sight : TUNE.coneR)
-          && (e.k === 4 || Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(p.y - e.y, p.x - e.x) - e.ang)) < TUNE.fov)
-          && this.los(p.x, p.y, e.x, e.y))) continue;
+        const sees = ps.some((p) => p.in && !p.down && Math.hypot(p.x - e.x, p.y - e.y) < (e.k === 4 ? TUNE.sight : this.coneR)
+          && (e.k === 4 || Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(p.y - e.y, p.x - e.x) - e.ang)) < this.fov)
+          && this.los(p.x, p.y, e.x, e.y));
+        // Close by he hears you even outside his cone: a meter that fills while you linger, drains when you leave.
+        const near = e.k !== 4 && ps.some((p) => p.in && !p.down && Math.hypot(p.x - e.x, p.y - e.y) < this.earR && this.los(p.x, p.y, e.x, e.y));
+        e.ear = Math.max(0, (e.ear || 0) + (near ? dt : -dt * 0.5));
+        if (e.ear > 0) fx.lineStyle(2, 0xff4455, 0.25 + 0.6 * Math.min(1, e.ear / this.earMs)).strokeCircle(e.x, e.y, 12 + 6 * Math.min(1, e.ear / this.earMs));
+        if (!sees && e.ear < this.earMs) continue;
         e.un = false; e.stun = TUNE.peekMs; e.t = this.react; e.img.setVisible(true);
         if (e.k !== 4) this.pop(e.x, e.y - 20, '!', '#ff4455', 26);
       }
@@ -1029,7 +1114,7 @@ class Play extends Phaser.Scene {
       }
       // An unaware enemy shows only while a player has him in view, with his cone of view on the floor.
       for (const e of E) if (e.un) {
-        const v = this.visF[idx((e.x / T) | 0, (e.y / T) | 0)] === F, a = e.ang - TUNE.fov, b = e.ang + TUNE.fov, r = TUNE.coneR;
+        const v = this.visF[idx((e.x / T) | 0, (e.y / T) | 0)] === F, a = e.ang - this.fov, b = e.ang + this.fov, r = this.coneR;
         e.img.setVisible(v);
         if (v && e.k !== 4) fx.fillStyle(0xffe14a, 0.14).fillTriangle(e.x, e.y, e.x + Math.cos(a) * r, e.y + Math.sin(a) * r, e.x + Math.cos(b) * r, e.y + Math.sin(b) * r);
       }
@@ -1072,12 +1157,13 @@ class Play extends Phaser.Scene {
     this.hudC.setText(this.alarm ? 'ALARMA  PISO ' + this.floor : 'PISO ' + this.floor).setColor(this.alarm ? '#ff4455' : '#ffffff');
 
     // ---- Floor cleared: every room empty and the horde dead ----
-    if (this.winT > 0) { if ((this.winT -= rdt) <= 0) this.nextFloor(); }
+    if (this.winT > 0) { if ((this.winT -= rdt) <= 0) this.showCard(); }
     else if (this.cleared === 5 && !E.length && !this.pending) {
-      const bonus = Math.max(0, Math.round(TUNE.floorBonus - (this.floorT / 1000) * TUNE.bonusPerSec)) + (this.alarm ? 0 : TUNE.silent);
+      const noisy = this.alarm || this.sieged;
+      const bonus = Math.max(0, Math.round(TUNE.floorBonus - (this.floorT / 1000) * TUNE.bonusPerSec)) + (noisy ? 0 : TUNE.silent);
       this.score += bonus; this.winT = 1700;
-      if (!this.alarm) this.silentN++;
-      this.say((this.alarm ? 'PISO DESPEJADO +' : 'PISO EN SILENCIO +') + bonus, '#35d07f');
+      if (!noisy) this.silentN++;
+      this.say((noisy ? 'PISO DESPEJADO +' : 'PISO EN SILENCIO +') + bonus, '#35d07f');
       [523, 659, 784, 1047].forEach((f, i) => this.time.delayedCall(i * 90, () => tone(this, f, 220, 'triangle', 0.08)));
     }
   }
