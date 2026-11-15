@@ -2,7 +2,7 @@
 
 Objective: a top-down tactical room-clearing arcade shooter for the Platanus Hack 26 arcade
 challenge, in one `game.js` (Phaser 3.87, at most 50 KB minified, no assets).
-Branch: `feat/stack-up`. Delivery: `single-pr`. Target: ships 14–15 November 2026 (hard
+Branch: `dev` (from `main`). Delivery: `single-pr`. Target: ships 14–15 November 2026 (hard
 deadline 18 November, 23:59 Santiago). Test runner: none exists for this repo; checks are the scripts in `## Checks`.
 Status: first full build written and script-checked; not yet played. Brief: `design/game-brief.md`.
 
