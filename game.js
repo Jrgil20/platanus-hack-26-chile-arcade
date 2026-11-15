@@ -73,6 +73,8 @@ const TUNE = {
   assist: 0.05, assistRange: 110, laser: 150,
   // Surprise: how long a freshly kicked room cannot act, and the slow motion that goes with it.
   surpriseMs: 800, slowMs: 550, slowScale: 0.35,
+  // Quiet entry: how close to a door button 3 works, and how long an enemy caught unaware stays frozen.
+  doorReach: 46, peekMs: 600,
   // Enemy reaction time is the main difficulty number; each *Step applies per floor.
   reactMs: 520, reactStep: 50, reactMin: 220,
   eFireMs: 900, eFireStep: 60, eFireMin: 450,
@@ -252,7 +254,7 @@ class Title extends Phaser.Scene {
     const p = label(this, W / 2, 492, 'PRESS START', 32, '#ff4455');
     this.tweens.add({ targets: p, alpha: 0.15, duration: 500, yoyo: true, repeat: -1 });
     label(this, W / 2, 532, '2 PLAYERS: PLAYER 2 PRESSES START, NOW OR ANY TIME', 16, '#8dff4a');
-    label(this, W / 2, 578, 'STICK: MOVE    B1: FIRE (HOLD TO LOCK AIM)    B2: GRENADE', 14, '#5d7699');
+    label(this, W / 2, 578, 'STICK: MOVE   B1: FIRE (HOLD: LOCK AIM)   B2: GRENADE   B3: QUIET DOOR', 14, '#5d7699');
     crt(this);
     this.showKit();
     getStorage().get(SCORE_KEY).then((r) => {
@@ -294,6 +296,10 @@ class Play extends Phaser.Scene {
       speed: { min: 40, max: 260 }, lifespan: 450, scale: { start: 2.6, end: 0 }, tint, emitting: false,
     }).setDepth(4);
     this.blood = parts(0xff3355); this.sparks = parts(0xffd27a);
+    // Quietly opened rooms keep their own fog, tile by tile: seen = looked at once, visF = in view this frame.
+    this.fogG = this.add.graphics().setDepth(5);
+    this.seen = new Uint8Array(COLS * ROWS); this.visF = new Uint16Array(COLS * ROWS); this.frameN = 0;
+    this.tip = label(this, 0, 0, 'B3: OPEN QUIETLY', 13, '#ffb020').setDepth(11).setVisible(false);
     // Two operators; player 2 only takes part once he has pressed START. Each carries a different grenade.
     this.ps = [0, 1].map((i) => ({
       i, c: 'P' + (i + 1) + '_', k: (kit + i) % 3, col: i ? 0x8dff4a : 0x39e6ff, in: !i || duo, down: false,
@@ -307,7 +313,7 @@ class Play extends Phaser.Scene {
     this.hudL = hud(12, 9, 0, 20); this.hudC = hud(W / 2 - 40, 9, 0.5, 20);
     this.rowT = [0, 1].map((i) => hud(590, 5 + i * 17, 0, 13)); this.kitT = [0, 1].map((i) => hud(W - 8, 5 + i * 17, 1, 13));
     this.rows();
-    label(this, W / 2, 590, 'STICK: MOVE    B1: FIRE (HOLD TO LOCK AIM)    B2: GRENADE', 13, '#3f5878').setDepth(10);
+    label(this, W / 2, 590, 'STICK: MOVE   B1: FIRE (HOLD: LOCK AIM)   B2: GRENADE   B3: QUIET DOOR', 13, '#3f5878').setDepth(10);
     this.banner = label(this, W / 2, 300, '', 44).setDepth(11).setAlpha(0).setShadow(0, 0, '#000000', 8, true, true);
     crt(this);
     this.nextFloor();
@@ -333,6 +339,7 @@ class Play extends Phaser.Scene {
     this.enemies = []; this.bullets = []; this.nades = []; this.rings = []; this.picks = [];
     this.decal.clear();
     this.alarm = false; this.pending = 0; this.spawnT = 0; this.floorT = 0; this.cleared = 0; this.flowT = 0;
+    this.quiet = 0; this.seen.fill(0);
     this.react = Math.max(TUNE.reactMin, TUNE.reactMs - TUNE.reactStep * s);
     this.eFire = Math.max(TUNE.eFireMin, TUNE.eFireMs - TUNE.eFireStep * s);
     this.eBullet = TUNE.eBullet + TUNE.eBulletStep * s;
@@ -347,7 +354,7 @@ class Play extends Phaser.Scene {
     this.say('FLOOR ' + f, '#39e6ff');
     tone(this, 440, 140, 'square', 0.06, 880);
     if (!s) {
-      const h = this.hint = label(this, W / 2, 346, 'WALK INTO A DOOR TO KICK IT IN', 18, '#ffb020').setDepth(11);
+      const h = this.hint = label(this, W / 2, 346, 'WALK INTO A DOOR TO KICK IT IN\nOR STAND BY IT AND PRESS B3 TO OPEN IT QUIETLY', 18, '#ffb020').setDepth(11);
       this.tweens.add({ targets: h, alpha: 0, delay: 3500, duration: 600 });
     }
   }
@@ -359,7 +366,7 @@ class Play extends Phaser.Scene {
       const x0 = 1 + (i % 3) * RS, y0 = OY + 1 + ((i / 3) | 0) * RS;
       for (let y = 0; y < 12; y++) for (let x = 0; x < 12; x++) g[idx(x0 + x, y0 + y)] = 0;
       // st: 0 hidden, 1 awake, 2 clear. left: enemies alive. ns: a kill outside surprise happened. host: its hostage.
-      this.rooms.push({ x0, y0, st: 0, left: 0, ns: 0, host: null });
+      this.rooms.push({ x0, y0, st: 0, left: 0, ns: 0, host: null, q: 0 }); // q: opened quietly, still being cleared
     }
     // Doors: a random spanning tree over the six rooms, plus a few extra doors.
     const edges = [], set = [0, 1, 2, 3, 4, 5];
@@ -415,7 +422,7 @@ class Play extends Phaser.Scene {
     }
     const ang = Math.random() * 6.28;
     const img = this.add.image(x, y, 'e' + k).setDepth(3).setScale(k === 3 ? 1.5 : 1.2).setRotation(ang).setVisible(!R);
-    const e = { k, room, x, y, ang, stun: 0, t: 0, call: 0, bt: 0, bn: 0, seen: false, kx: 0, ky: 0, hp: k === 3 ? TUNE.heavyHp : 1, img };
+    const e = { k, room, x, y, ang, stun: 0, t: 0, call: 0, bt: 0, bn: 0, seen: false, un: false, kx: 0, ky: 0, hp: k === 3 ? TUNE.heavyHp : 1, img };
     if (k === 4) R.host = e; else if (R) R.left++;
     this.enemies.push(e);
   }
@@ -517,6 +524,23 @@ class Play extends Phaser.Scene {
     if (woke && !this.alarm) this.slow = TUNE.slowMs;
     this.drawMap();
   }
+  // The quiet entry: the door swings open without a sound and the room stays dark. Nobody inside
+  // knows yet; each of them only reacts once there is a clear line between him and a player.
+  sneak(d) {
+    if (d.open) return;
+    d.open = true;
+    for (const t of d.tiles) this.grid[t] = 3;
+    this.flowT = 0;
+    tone(this, 240, 180, 'sine', 0.05, 170);
+    for (const i of [d.a, d.b]) {
+      const R = this.rooms[i];
+      if (R.st) continue;
+      R.st = R.q = 1; this.quiet++;
+      this.fogs[i].setVisible(false);
+      for (const e of this.enemies) if (e.room === i) { e.un = !this.alarm; e.img.setVisible(this.alarm); }
+    }
+    this.drawMap();
+  }
   wake(i) {
     const R = this.rooms[i];
     if (R.st) return false;
@@ -533,11 +557,13 @@ class Play extends Phaser.Scene {
     const n = this.alarm ? TUNE.hordeAgain + this.floor : TUNE.horde + TUNE.hordeStep * this.floor;
     this.pending += Math.round(n * (this.ps[1].in ? TUNE.hordeDuo : 1));
     this.alarm = true;
+    for (const e of this.enemies) if (e.un) { e.un = false; e.img.setVisible(true); } // nobody is unaware any more
     this.say('ALARM!', '#ff4455');
     this.cameras.main.flash(200, 255, 40, 40);
   }
   clearRoom(R) {
     R.st = 2; this.cleared++; this.roomsN++; this.score += TUNE.clear;
+    if (R.q) { R.q = 0; this.quiet--; }
     this.drawMap();
     const cx = (R.x0 + 6) * T, cy = (R.y0 + 6) * T;
     this.pop(cx, cy, 'ROOM CLEAR +' + TUNE.clear, '#35d07f', 24);
@@ -671,6 +697,7 @@ class Play extends Phaser.Scene {
     for (const e of this.enemies.slice()) {
       const d = Math.hypot(e.x - x, e.y - y);
       if (d > K.r || !this.los(x, y, e.x, e.y) || (e.room >= 0 && !this.rooms[e.room].st)) continue;
+      if (e.un) { e.un = false; e.img.setVisible(true); }
       if (K.kill) { this.kill(e); continue; }
       if (e.k === 4) continue; // flash and concussion do not hurt a hostage
       e.stun = Math.max(e.stun, K.stun);
@@ -713,6 +740,12 @@ class Play extends Phaser.Scene {
       this.move(p, mx * sp, my * sp, 7);
       if (this.hitD) this.openDoor(this.hitD); // the kick: walk into a door and it bursts open
     }
+    // The other entry: standing by a closed door, button 3 opens it without waking the room.
+    const b3 = take(c + '3');
+    for (const d of this.doors) if (!d.open && Math.hypot(d.x - p.x, d.y - p.y) < TUNE.doorReach) {
+      this.tip.setPosition(Phaser.Math.Clamp(d.x, 70, W - 70), d.y - 24).setVisible(true);
+      if (b3) this.sneak(d);
+    }
     if (p.kx || p.ky) {
       this.move(p, p.kx * s, p.ky * s, 7);
       const k = Math.max(0, 1 - dt * 0.006); p.kx *= k; p.ky *= k;
@@ -728,7 +761,7 @@ class Play extends Phaser.Scene {
     const AR = TUNE.assistRange, a1 = p.ang - near, a2 = p.ang + near;
     fx.fillStyle(p.col, 0.07).fillTriangle(p.x, p.y, p.x + Math.cos(a1) * AR, p.y + Math.sin(a1) * AR, p.x + Math.cos(a2) * AR, p.y + Math.sin(a2) * AR);
     for (const e of this.enemies) {
-      if (e.k === 4 || (e.room >= 0 && !this.rooms[e.room].st) || Math.hypot(e.x - p.x, e.y - p.y) > AR) continue;
+      if (e.k === 4 || e.un || (e.room >= 0 && !this.rooms[e.room].st) || Math.hypot(e.x - p.x, e.y - p.y) > AR) continue;
       const a = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(e.y - p.y, e.x - p.x) - p.ang));
       if (a < near && this.los(p.x, p.y, e.x, e.y)) { near = a; tgt = e; }
     }
@@ -766,6 +799,7 @@ class Play extends Phaser.Scene {
     const rdt = Math.min(delta, 50), fx = this.fx.clear(), E = this.enemies, ps = this.ps;
     if (this.over) return this.overTick(rdt);
     if (!ps[1].in && take('START2')) this.join();
+    this.tip.setVisible(false);
     // One clock: every gameplay timer counts in dt, so slow motion slows all of them.
     if (this.slow > 0) this.slow -= rdt;
     const dt = rdt * (this.slow > 0 ? TUNE.slowScale : 1), s = dt / 1000;
@@ -811,6 +845,10 @@ class Play extends Phaser.Scene {
     // ---- Enemies ----
     for (let i = E.length - 1; i >= 0; i--) {
       const e = E[i];
+      if (e.un) { // unaware in a quietly opened room: he reacts once a clear line reaches a player
+        if (!ps.some((p) => p.in && !p.down && Math.hypot(p.x - e.x, p.y - e.y) < TUNE.sight && this.los(p.x, p.y, e.x, e.y))) continue;
+        e.un = false; e.stun = TUNE.peekMs; e.t = this.react; e.img.setVisible(true);
+      }
       if (e.k === 4 || (e.room >= 0 && !this.rooms[e.room].st)) continue; // hostage, or still behind closed doors
       const q = this.target(e);
       if (!q) break;
@@ -882,6 +920,24 @@ class Play extends Phaser.Scene {
       fx.fillStyle(K.c, 0.08).fillCircle(n.x, n.y, K.r).lineStyle(2, K.c, 0.55 + 0.35 * Math.sin(time / 40)).strokeCircle(n.x, n.y, K.r);
       n.img.setPosition(n.x, n.y - h * 14).setScale(1.3 + h).setRotation(n.t / 60);
       if ((n.t -= dt) <= 0) { n.img.destroy(); this.nades.splice(i, 1); this.boom(n.x, n.y, K); }
+    }
+
+    // ---- Quietly opened rooms: lit only where a player sees right now, dim where he has already looked ----
+    const fg = this.fogG.clear();
+    if (this.quiet) {
+      const g = this.grid, F = this.frameN = (this.frameN % 60000) + 1;
+      for (const p of ps) if (p.in && !p.down) for (let a = 0; a < 6.283; a += 0.035) {
+        const cx = Math.cos(a) * 6, cy = Math.sin(a) * 6;
+        for (let x = p.x, y = p.y, n = 0; n < 75; n++, x += cx, y += cy) {
+          const t = idx((x / T) | 0, (y / T) | 0), v = g[t];
+          if (v === 0 || v === 3 || v === 5) { this.visF[t] = F; this.seen[t] = 1; }
+          if (v !== 0 && v !== 3) break;
+        }
+      }
+      for (const R of this.rooms) if (R.q) for (let y = 0; y < 12; y++) for (let x = 0; x < 12; x++) {
+        const t = idx(R.x0 + x, R.y0 + y);
+        if (this.visF[t] !== F) fg.fillStyle(0x04070d, this.seen[t] ? 0.5 : 0.97).fillRect((R.x0 + x) * T, (R.y0 + y) * T, T, T);
+      }
     }
 
     // ---- Effects and HUD ----

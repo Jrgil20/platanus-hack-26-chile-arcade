@@ -214,6 +214,7 @@ Total guessed: about 11 KB, half of what is free.
 |---|---|---|
 | Now (e27dcce) | 23.03 KB | 26.97 KB |
 | M1–M6 built in one pass (15 Nov) | 30.49 KB | 19.51 KB |
+| Quiet entry (15 Nov) | 32.14 KB | 17.86 KB |
 
 ## Risks
 
@@ -281,3 +282,25 @@ Total guessed: about 11 KB, half of what is free.
   (player 2 gets the next type after player 1's pick); the horde is 1.5x in co-op; grenades cap
   at 5; in both hands of a scripted 2.4 s firefight no enemy died, because the aim assist now
   only reaches 170 px — expected after the author's request, to be judged in play.
+- L15 (2026-11-15, the author on the aim assist): "sigo viendo el aim demasiado grande", then
+  "demasiado frande ese auto aim deve ser el tieangulo minimo  unos 2 o 3 grados". Now
+  `assist` 0.05 rad each side, `assistRange` 110, `laser` 150. "ahora si, mergealo a main":
+  main fast-forwarded to d16aa7a and pushed.
+- L16 (2026-11-15): "demasiado grande ese circulo que veo al princionio no se ni que es" — the
+  blast ring drawn before a throw was removed; a small cross marks the landing spot (8803497).
+- L17 (2026-11-15, new requirement, verbatim): "me encantaria dos tipos de entrada quedan
+  botones por asignar una entrada tipo tactica si estas al lado de la puerta la puedas activar
+  por un boton y sea como un despeje de habitacion onde se va abriendo segun el rango de vision
+  y un triangulo que se va abriendo como en un despeje tectico  que se va abriendo de forma qeu
+  vaya viendo la habitacion".
+  **S9 — Two entries.** The kick stays (walk into the door: loud, whole room surprised, slow
+  motion). New quiet entry on button 3 (`P1_3` / `P2_3`) when standing by a closed door
+  (`doorReach` 46 px): the door opens silently and the room stays dark; it is revealed tile by
+  tile by line of sight from the players, so the lit area is the wedge seen through the door
+  and widens as you move. *(assumptions)* Each enemy stays unaware until a clear line reaches a
+  player, then is frozen for `peekMs` 600 ms (kills in it count as surprise); tiles looked at
+  before stay dimmed; an alarm or a grenade blast ends unawareness; no slow motion.
+- L18 (2026-11-15, evidence, one scripted run): beside the door the prompt shows; button 3
+  opens it, the room is awake-quiet with 3 of 3 enemies unaware and hidden and 7 tiles seen
+  from the side; in front of the door 72 tiles seen and all three spotted and frozen; one step
+  inside 125 tiles. No uncaught error. Official size 32.14 KB. Not played.
