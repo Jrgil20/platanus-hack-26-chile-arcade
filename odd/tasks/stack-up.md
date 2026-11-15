@@ -112,6 +112,12 @@ Two days: 14 and 15 November. The game is submittable after every task.
   floors, game over and retry; `metadata.json`; `cover.png`. Official size 18.72 KB.
   Scripted runs with no uncaught error: title, play, kick, grenade, alarm, death and retry,
   floor clear into floor 2. **Not checked: how it feels. Nobody has played it.**
+- [x] **T2a — First play session, first fixes.** (S1, S4, S5) inline, 15 November. From the
+  author's notes in L8: aim assist with a laser sight and target ring; grenades drawn per type,
+  thrown in an arc with a shadow, with a landing marker and blast ring before the throw;
+  smaller blast radii and shorter self-blind; brighter look (glowing characters, lit and
+  cleared rooms, crates, light flares, bodies on the floor, alarm border, monitor overlay).
+  Official size 22.83 KB. Scripted runs clean for all three grenades. **Not played yet.**
 - [ ] **T2 — The author plays; tuning round.** (S1, S5, S6) inline, 14–15 November. The author
   runs `npm run dev` and says what feels wrong; fixes are numbers in `TUNE` first, code second.
 - [ ] **T3 — Juice and sound pass.** (S1) inline, 15 November. Only what the play session asks for.
@@ -152,3 +158,14 @@ Two days: 14 and 15 November. The game is submittable after every task.
   silent bonus and builds floor 2; three hits end the run and one press starts a new one.
 - L7 (2026-11-14): three grenade types and the title pick were built in T1 instead of last,
   because the measured size left 31 KB free.
+- L8 (2026-11-15, the author after playing, verbatim): "tenemos espacio, no se ve bien lo que
+  es una granada y demas, ademas es dificil apuntar,  pero puedo matar al de la alarma y luego
+  esperar en otra habitacion eso me gusta bastamte veo que tenemos un poco de espacio casi la
+  mitad eso me gusta da la posibilidad de trabajar en varias cosas pero creo que deberia sera un
+  poco mas visual no llama mucho la atencion , casi siempre me ciego con la flash , creo que el
+  radio es demasiado grande". Keep: killing the lookout and then waiting in another room.
+- L9 (2026-11-15, evidence): blast radii 115/100/85 changed to 80/75/70, self-blind 1600 ms to
+  900 ms. Scripted: a flash landing 166 px away does not blind the player; one thrown at a wall
+  60 px away does; a concussion at 60 px shoves the player; a frag at 60 px costs one hit. Aim
+  assist turned a shot 0.10 rad onto an enemy and killed it. Official checker 22.83 KB minified,
+  all restrictions pass; `CABINET_KEYS` block identical to the starter's; cover 800x600, 192 KB.

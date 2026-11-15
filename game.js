@@ -1,6 +1,6 @@
 // STACK UP — Platanus Hack 26 arcade challenge. One file, Phaser 3.87, no assets.
 // Top-down tactical room clearing: kick the door, surprise the room, stop the radio call.
-// Everything drawn with Graphics, every sound a Web Audio tone.
+// Everything is drawn in code (canvas and Graphics), every sound is a Web Audio tone.
 
 const W = 800, H = 600;
 
@@ -66,6 +66,8 @@ function getStorage() {
 // ---- Tuning: every gameplay number lives here ----
 const TUNE = {
   speed: 185, fireMs: 150, bullet: 640, hp: 3, invulnMs: 1000,
+  // Aim assist: a shot goes to the visible enemy nearest to where you face, inside this cone (radians each side).
+  assist: 0.6, laser: 330,
   // Surprise: how long a freshly kicked room cannot act, and the slow motion that goes with it.
   surpriseMs: 800, slowMs: 550, slowScale: 0.35,
   // Enemy reaction time is the main difficulty number; each *Step applies per floor.
@@ -76,19 +78,20 @@ const TUNE = {
   callMs: 2400, callStep: 150, callMin: 1300,
   shooters: 2, shootersMax: 6, extraDoor: 0.35,
   horde: 6, hordeStep: 2, hordeAgain: 3, hordeEveryMs: 260,
-  throwSpeed: 430, fuseMs: 850, grenades: 3, friction: 0.0022,
+  throwSpeed: 430, fuseMs: 850, grenades: 3, friction: 0.0022, blindMs: 900,
   kill: 100, rushKill: 50, clear: 250, multMax: 9,
   floorBonus: 3000, bonusPerSec: 25, silent: 1000,
 };
 
 // Grenades: one system, one row each. Every effect also applies to the player.
+// r is the blast radius in pixels; rgb/body/band only colour the drawing.
 const KITS = [
-  { n: 'FLASH', d: 'BLINDS THE ROOM. NO DAMAGE.', c: 0xffffff, r: 115, stun: 2600 },
-  { n: 'CONC', d: 'STUNS, SHOVES AND BLOWS DOORS OPEN.', c: 0x66ccff, r: 100, stun: 1400, kb: 300, door: 1 },
-  { n: 'FRAG', d: 'KILLS. BLOWS DOORS OPEN.', c: 0xffaa33, r: 85, kill: 1, door: 1 },
+  { n: 'FLASH', d: 'BLINDS THE ROOM. NO DAMAGE.', c: 0xffffff, rgb: '255,255,255', body: '#c8d2dc', band: '#2f7bff', r: 80, stun: 2600 },
+  { n: 'CONC', d: 'STUNS, SHOVES AND BLOWS DOORS OPEN.', c: 0x66ccff, rgb: '102,204,255', body: '#2c5d7a', band: '#66ccff', r: 75, stun: 1400, kb: 300, door: 1 },
+  { n: 'FRAG', d: 'KILLS. BLOWS DOORS OPEN.', c: 0xffaa33, rgb: '255,170,51', body: '#3d5a2a', band: '#ffaa33', r: 70, kill: 1, door: 1 },
 ];
 
-// ---- Map: a tile grid. 0 floor, 1 wall, 2 closed door, 3 open door, 4 street door ----
+// ---- Map: a tile grid. 0 floor, 1 wall, 2 closed door, 3 open door, 4 street door, 5 crate ----
 const T = 20, COLS = 40, ROWS = 30, OY = 2, RS = 13, FLOOR_ROWS = 27;
 const idx = (tx, ty) => tx + ty * COLS;
 
@@ -102,27 +105,55 @@ function tone(scene, freq, ms, type = 'square', vol = 0.08, to) {
   o.connect(g).connect(ctx.destination); o.start(t); o.stop(e);
 }
 
-// ---- Textures: drawn once, all facing right ----
+// ---- Textures: painted once on small canvases, people facing right, each with its own glow ----
 function makeTextures(scene) {
   if (scene.textures.exists('player')) return;
-  const g = scene.make.graphics({ x: 0, y: 0, add: false });
-  // Operator: cyan body, dark helmet, white rifle.
-  g.fillStyle(0x39e6ff).fillCircle(10, 10, 7).fillStyle(0x0b2a3a).fillCircle(9, 10, 3)
-    .fillStyle(0xffffff).fillRect(12, 8, 8, 3).generateTexture('player', 20, 20).clear();
-  // Gunman: red body, dark hat, grey pistol.
-  g.fillStyle(0xff4455).fillCircle(10, 10, 7).fillStyle(0x3a0a12).fillRect(5, 6, 6, 8)
-    .fillStyle(0xbfc7d5).fillRect(13, 9, 6, 2).generateTexture('e0', 20, 20).clear();
-  // Lookout: yellow body with a radio and its antenna.
-  g.fillStyle(0xffe14a).fillCircle(10, 10, 7).fillStyle(0x3a3205).fillRect(8, 3, 5, 6)
-    .fillStyle(0xffffff).fillRect(12, 1, 1, 6).generateTexture('e1', 20, 20).clear();
-  // Thug (horde): a magenta wedge that charges.
-  g.fillStyle(0xff3dc8).fillTriangle(19, 10, 3, 2, 3, 18).fillStyle(0x3a0a2e).fillRect(8, 7, 3, 6)
-    .generateTexture('e2', 20, 20).clear();
-  g.fillStyle(0xbff6ff).fillRect(0, 0, 8, 2).generateTexture('pb', 8, 2).clear();
-  g.fillStyle(0xff9a3c).fillRect(0, 0, 8, 3).generateTexture('eb', 8, 3).clear();
-  g.fillStyle(0xffffff).fillCircle(5, 5, 4).fillStyle(0x222222).fillRect(4, 0, 2, 3).generateTexture('nade', 10, 10).clear();
-  g.fillStyle(0xffffff).fillRect(0, 0, 2, 2).generateTexture('dot', 2, 2).destroy();
+  const tex = (key, w, h, draw) => { const c = scene.textures.createCanvas(key, w, h); draw(c.getContext()); c.refresh(); };
+  const halo = (x, cx, cy, r, rgb, a) => {
+    const g = x.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, 'rgba(' + rgb + ',' + a + ')'); g.addColorStop(1, 'rgba(' + rgb + ',0)');
+    x.fillStyle = g; x.fillRect(cx - r, cy - r, r * 2, r * 2);
+  };
+  const disc = (x, cx, cy, rx, ry, fill) => { x.fillStyle = fill; x.beginPath(); x.ellipse(cx, cy, rx, ry, 0, 0, 7); x.fill(); };
+  const box = (x, a, b, w, h, fill) => { x.fillStyle = fill; x.fillRect(a, b, w, h); };
+  // A person seen from above: glow, shoulders, then whatever `draw` adds (weapon, head, hat).
+  const person = (key, rgb, coat, draw) => tex(key, 40, 40, (x) => { halo(x, 20, 20, 20, rgb, 0.5); disc(x, 19, 20, 6, 10, coat); draw(x); });
+  person('player', '57,230,255', '#17606f', (x) => {
+    box(x, 21, 23, 16, 3, '#e8f6ff'); box(x, 21, 22, 6, 5, '#0d3a44'); // rifle and grip
+    disc(x, 20, 20, 6, 6, '#39e6ff'); box(x, 23, 17, 3, 6, '#06222b'); // helmet and visor
+  });
+  person('e0', '255,68,85', '#b3202f', (x) => { // gunman: red suit, pistol, fedora
+    box(x, 22, 23, 11, 3, '#cfd6e4');
+    disc(x, 20, 20, 8, 8, '#3a0a12'); disc(x, 20, 20, 5, 5, '#6b1522');
+  });
+  person('e1', '255,225,74', '#c9a81e', (x) => { // lookout: yellow coat, radio at his ear, antenna
+    disc(x, 20, 20, 6, 6, '#ffe14a'); box(x, 17, 9, 6, 9, '#2b2606'); box(x, 19, 2, 2, 8, '#ffffff');
+  });
+  person('e2', '255,61,200', '#a01d7c', (x) => { // thug: magenta jacket, bat out front
+    box(x, 22, 15, 15, 3, '#f1e2bd'); box(x, 20, 23, 8, 3, '#a01d7c');
+    disc(x, 20, 20, 6, 6, '#ff8fe0');
+  });
+  tex('pb', 18, 8, (x) => { halo(x, 9, 4, 9, '120,240,255', 0.8); box(x, 3, 3, 12, 2, '#eaffff'); });
+  tex('eb', 18, 8, (x) => { halo(x, 9, 4, 9, '255,140,50', 0.8); box(x, 3, 3, 12, 2, '#fff0d0'); });
+  KITS.forEach((K, i) => tex('n' + i, 18, 18, (x) => { // grenade: body, cap, lever, coloured band
+    halo(x, 9, 9, 9, K.rgb, 0.6);
+    disc(x, 9, 10, 4, 5, K.body); box(x, 7, 3, 4, 3, '#d9d9d9'); box(x, 10, 2, 4, 2, '#d9d9d9'); box(x, 5, 9, 8, 2, K.band);
+  }));
+  tex('glow', 64, 64, (x) => halo(x, 32, 32, 32, '255,255,255', 1));
+  tex('dot', 2, 2, (x) => box(x, 0, 0, 2, 2, '#ffffff'));
+  tex('scan', 2, 3, (x) => box(x, 0, 0, 2, 1, '#000000'));
+  tex('vig', 200, 150, (x) => {
+    const g = x.createRadialGradient(100, 75, 85, 100, 75, 135);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.5)');
+    x.fillStyle = g; x.fillRect(0, 0, 200, 150);
+  });
 }
+
+// An old-monitor look over everything: dark corners and scanlines.
+const crt = (scene) => {
+  scene.add.image(0, 0, 'vig').setOrigin(0).setScale(4).setDepth(20);
+  scene.add.tileSprite(0, 0, W, H, 'scan').setOrigin(0).setDepth(21).setAlpha(0.16);
+};
 
 const FONT = 'monospace';
 const label = (scene, x, y, s, size, color) =>
@@ -140,29 +171,34 @@ class Title extends Phaser.Scene {
     g.lineStyle(1, 0x14233c);
     for (let x = 0; x <= W; x += T) g.lineBetween(x, 0, x, H);
     for (let y = 0; y <= H; y += T) g.lineBetween(0, y, W, y);
-    g.lineStyle(6, 0x4f8fd6).strokeRect(360, 230, 300, 170);
+    g.fillStyle(0x14213b).fillRect(360, 230, 300, 170).lineStyle(6, 0x6fb8ff).strokeRect(360, 230, 300, 170);
     g.fillStyle(0x05080f).fillRect(354, 290, 12, 50).fillStyle(0xffb020).fillRect(357, 294, 6, 42);
-    this.add.image(300, 315, 'player').setScale(3.2);
-    g.fillStyle(0xbff6ff).fillRect(380, 313, 26, 4).fillRect(430, 313, 26, 4);
-    this.add.image(520, 275, 'e0').setScale(3).setRotation(2.6);
-    this.add.image(590, 350, 'e0').setScale(3).setRotation(3.4);
-    this.add.image(470, 365, 'e1').setScale(3).setRotation(3.3);
-    g.fillStyle(0x000000, 0.7).fillRect(440, 322, 60, 9).fillStyle(0xffe14a).fillRect(442, 324, 34, 5);
+    this.add.image(315, 315, 'glow').setScale(5).setTint(0x39e6ff).setAlpha(0.25).setBlendMode(1);
+    this.add.image(300, 315, 'player').setScale(2.4);
+    this.add.image(400, 315, 'pb').setScale(2.4); this.add.image(455, 315, 'pb').setScale(2.4);
+    this.add.image(530, 275, 'e0').setScale(2.2).setRotation(2.6);
+    this.add.image(600, 350, 'e0').setScale(2.2).setRotation(3.4);
+    this.add.image(480, 362, 'e1').setScale(2.2).setRotation(3.3);
+    g.fillStyle(0x000000, 0.7).fillRect(450, 318, 60, 9).fillStyle(0xffe14a).fillRect(452, 320, 34, 5);
 
-    label(this, W / 2, 96, 'STACK UP', 92, '#39e6ff');
+    const title = label(this, W / 2, 96, 'STACK UP', 92, '#39e6ff').setShadow(0, 0, '#39e6ff', 24, true, true);
+    this.tweens.add({ targets: title, scale: 1.03, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     label(this, W / 2, 170, 'KICK THE DOOR. SURPRISE THE ROOM. STOP THE CALL.', 20, '#ffb020');
+    this.kitIcon = this.add.image(W / 2 - 190, 436, 'n0').setScale(2.6);
     this.kitText = label(this, W / 2, 436, '', 26);
     this.kitDesc = label(this, W / 2, 466, '', 16, '#9fb6d6');
     this.bestText = label(this, W / 2, 500, 'BEST ' + best, 20, '#ffe14a');
     const p = label(this, W / 2, 540, 'PRESS START', 30, '#ff4455');
     this.tweens.add({ targets: p, alpha: 0.15, duration: 500, yoyo: true, repeat: -1 });
     label(this, W / 2, 580, 'STICK: MOVE    B1: FIRE (HOLD TO LOCK AIM)    B2: GRENADE', 14, '#5d7699');
+    crt(this);
     this.showKit();
     getStorage().get(BEST_KEY).then((r) => {
       if (r && r.found && Number.isFinite(r.value) && r.value > best) { best = r.value; this.bestText.setText('BEST ' + best); }
     }).catch(() => {});
   }
   showKit() {
+    this.kitIcon.setTexture('n' + kit);
     this.kitText.setText('<  GRENADE: ' + KITS[kit].n + '  >');
     this.kitDesc.setText(KITS[kit].d + '  A BAD THROW HITS YOU TOO.');
   }
@@ -185,6 +221,8 @@ class Play extends Phaser.Scene {
     this.enemies = []; this.bullets = []; this.nades = []; this.rings = [];
     this.mapG = this.add.graphics();
     this.decal = this.add.graphics().setDepth(1);
+    // The operator's pool of light: it makes the room you stand in read as lit.
+    this.light = this.add.image(0, 0, 'glow').setDepth(2).setBlendMode(1).setTint(0x9fdcff).setAlpha(0.2).setScale(6.5);
     this.fx = this.add.graphics().setDepth(4);
     this.fogs = [];
     for (let i = 0; i < 6; i++) {
@@ -192,15 +230,16 @@ class Play extends Phaser.Scene {
       this.fogs.push(this.add.rectangle(x, y, 12 * T, 12 * T, 0x04070d).setOrigin(0).setDepth(5));
     }
     const parts = (tint) => this.add.particles(0, 0, 'dot', {
-      speed: { min: 40, max: 230 }, lifespan: 420, scale: { start: 2.2, end: 0 }, tint, emitting: false,
+      speed: { min: 40, max: 260 }, lifespan: 450, scale: { start: 2.6, end: 0 }, tint, emitting: false,
     }).setDepth(4);
     this.blood = parts(0xff3355); this.sparks = parts(0xffd27a);
-    this.p = { x: 0, y: 0, ang: 0, cd: 0, hp: TUNE.hp, inv: 0, kx: 0, ky: 0, slow: 0, img: this.add.image(0, 0, 'player').setDepth(3) };
+    this.p = { x: 0, y: 0, ang: 0, cd: 0, hp: TUNE.hp, inv: 0, kx: 0, ky: 0, slow: 0, img: this.add.image(0, 0, 'player').setDepth(3).setScale(1.2) };
     this.white = this.add.rectangle(0, 0, W, H, 0xffffff).setOrigin(0).setDepth(9).setAlpha(0);
     const hud = (x, ox) => this.add.text(x, 9, '', { fontFamily: FONT, fontSize: '20px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(ox, 0).setDepth(10);
-    this.hudL = hud(12, 0); this.hudC = hud(W / 2, 0.5); this.hudR = hud(W - 12, 1);
+    this.hudL = hud(12, 0); this.hudC = hud(W / 2, 0.5); this.hudR = hud(W - 74, 1).setText(KITS[kit].n);
     label(this, W / 2, 590, 'STICK: MOVE    B1: FIRE (HOLD TO LOCK AIM)    B2: GRENADE', 13, '#3f5878').setDepth(10);
-    this.banner = label(this, W / 2, 300, '', 44).setDepth(11).setAlpha(0);
+    this.banner = label(this, W / 2, 300, '', 44).setDepth(11).setAlpha(0).setShadow(0, 0, '#000000', 8, true, true);
+    crt(this);
     this.nextFloor();
   }
 
@@ -220,6 +259,10 @@ class Play extends Phaser.Scene {
     this.build();
     this.say('FLOOR ' + f, '#39e6ff');
     tone(this, 440, 140, 'square', 0.06, 880);
+    if (!s) {
+      const h = this.hint = label(this, W / 2, 346, 'WALK INTO A DOOR TO KICK IT IN', 18, '#ffb020').setDepth(11);
+      this.tweens.add({ targets: h, alpha: 0, delay: 3500, duration: 600 });
+    }
   }
 
   build() {
@@ -256,10 +299,10 @@ class Play extends Phaser.Scene {
       const R = this.rooms[i];
       this.fogs[i].setVisible(i !== en).setAlpha(0.97);
       if (i === en) continue;
-      // Two pillars for cover, kept two tiles off the walls so no door is ever blocked.
+      // Two stacks of crates for cover, kept two tiles off the walls so no door is ever blocked.
       for (let n = 0; n < 2; n++) {
         const px = R.x0 + Phaser.Math.Between(2, 8), py = R.y0 + Phaser.Math.Between(2, 8);
-        g[idx(px, py)] = g[idx(px + 1, py)] = g[idx(px, py + 1)] = g[idx(px + 1, py + 1)] = 1;
+        g[idx(px, py)] = g[idx(px + 1, py)] = g[idx(px, py + 1)] = g[idx(px + 1, py + 1)] = 5;
       }
       const n = Math.min(TUNE.shootersMax, TUNE.shooters + ((f - 1) >> 1) + Phaser.Math.Between(0, 1));
       for (let k = 0; k <= n; k++) this.spawn(k ? 0 : 1, i); // one lookout, then the gunmen
@@ -280,21 +323,29 @@ class Play extends Phaser.Scene {
       }
       R.left++;
     }
-    const img = this.add.image(x, y, 'e' + k).setDepth(3).setVisible(room < 0);
+    const img = this.add.image(x, y, 'e' + k).setDepth(3).setScale(1.2).setVisible(room < 0);
     this.enemies.push({ k, room, x, y, ang: Math.random() * 6.28, stun: 0, t: 0, call: 0, bt: 0, seen: false, kx: 0, ky: 0, img });
   }
 
+  // Redrawn when a door opens or a room changes state: lit rooms and cleared rooms look different.
   drawMap() {
-    const m = this.mapG.clear(), top = OY * T, bot = (OY + FLOOR_ROWS) * T;
-    m.fillStyle(0x0a1322).fillRect(0, top, W, bot - top).lineStyle(1, 0x14233c);
-    for (let x = 0; x <= W; x += T) m.lineBetween(x, top, x, bot);
-    for (let y = top; y <= bot; y += T) m.lineBetween(0, y, W, y);
+    const m = this.mapG.clear(), g = this.grid;
     for (let ty = OY; ty < OY + FLOOR_ROWS; ty++) for (let tx = 0; tx < COLS; tx++) {
-      const t = this.grid[idx(tx, ty)], x = tx * T, y = ty * T;
-      if (t === 1) m.fillStyle(0x1d3a5f).fillRect(x, y, T, T).lineStyle(1, 0x4f8fd6, 0.55).strokeRect(x + 0.5, y + 0.5, T - 1, T - 1);
-      else if (t === 2) m.fillStyle(0xffb020).fillRect(x + 1, y + 1, T - 2, T - 2);
-      else if (t === 3) m.fillStyle(0xffb020, 0.3).fillRect(x + 2, y + 2, 5, 5).fillRect(x + 12, y + 11, 6, 4);
-      else if (t === 4) m.fillStyle(0x35d07f).fillRect(x + 1, y + 1, T - 2, T - 2);
+      const i = idx(tx, ty), t = g[i], x = tx * T, y = ty * T;
+      if (t === 1) { // wall: dark slab with a bright edge wherever it faces open floor
+        m.fillStyle(0x16304f).fillRect(x, y, T, T).fillStyle(0x6fb8ff);
+        if (g[i - 1] !== 1) m.fillRect(x, y, 2, T);
+        if (g[i + 1] !== 1) m.fillRect(x + T - 2, y, 2, T);
+        if (g[i - COLS] !== 1) m.fillRect(x, y, T, 2);
+        if (g[i + COLS] !== 1) m.fillRect(x, y + T - 2, T, 2);
+        continue;
+      }
+      const R = this.rooms[(((tx - 1) / RS) | 0) + 3 * (((ty - OY - 1) / RS) | 0)];
+      m.fillStyle([0x0a1322, 0x14213b, 0x0e2824][R ? R.st : 1] + ((tx + ty) & 1 ? 0x030506 : 0)).fillRect(x, y, T, T);
+      if (t === 2) m.fillStyle(0xffb020).fillRect(x + 1, y + 1, T - 2, T - 2).fillStyle(0x7a4c00).fillRect(x + 8, y + 8, 4, 4);
+      else if (t === 3) m.fillStyle(0xffb020, 0.45).fillRect(x + 2, y + 2, 6, 3).fillRect(x + 11, y + 12, 7, 3).fillRect(x + 5, y + 15, 3, 3);
+      else if (t === 4) m.fillStyle(0x35d07f).fillRect(x + 1, y + 1, T - 2, T - 2).fillStyle(0x0c5a34).fillRect(x + 4, y + 8, T - 8, 4);
+      else if (t === 5) m.fillStyle(0x7a4f25).fillRect(x + 1, y + 1, T - 2, T - 2).lineStyle(2, 0x3d2610).strokeRect(x + 2, y + 2, T - 4, T - 4).lineBetween(x + 3, y + 3, x + T - 3, y + T - 3);
     }
   }
 
@@ -337,19 +388,31 @@ class Play extends Phaser.Scene {
     e.ang = Math.atan2(ty - e.y, tx - e.x);
     this.move(e, Math.cos(e.ang) * step, Math.sin(e.ang) * step, 7);
   }
+  // One grenade step: bounce off walls, lose speed. Also used to predict where a throw lands.
+  fly(n, dt) {
+    const s = dt / 1000;
+    for (let k = 0; k < 4; k++) {
+      const dx = (n.vx * s) / 4, dy = (n.vy * s) / 4;
+      if (this.solid(n.x + dx, n.y)) n.vx *= -0.55; else n.x += dx;
+      if (this.solid(n.x, n.y + dy)) n.vy *= -0.55; else n.y += dy;
+    }
+    const fr = Math.max(0, 1 - dt * TUNE.friction); n.vx *= fr; n.vy *= fr;
+  }
 
   // ---- Doors, rooms, alarm ----
   openDoor(d) {
     if (d.open) return;
     d.open = true;
     for (const t of d.tiles) this.grid[t] = 3;
-    this.drawMap(); this.flowT = 0;
-    this.sparks.explode(16, d.x, d.y);
-    this.cameras.main.shake(140, 0.008);
+    this.flowT = 0;
+    this.sparks.explode(22, d.x, d.y);
+    this.flare(d.x, d.y, 0xffb020, 2.2, 220);
+    this.cameras.main.shake(160, 0.01);
     tone(this, 150, 170, 'sawtooth', 0.16, 45);
     let woke = false;
     for (const r of [d.a, d.b]) if (this.wake(r)) woke = true;
     if (woke && !this.alarm) this.slow = TUNE.slowMs;
+    this.drawMap();
   }
   wake(i) {
     const R = this.rooms[i];
@@ -372,26 +435,32 @@ class Play extends Phaser.Scene {
 
   // ---- Combat ----
   shoot(x, y, a, sp, foe) {
-    const img = this.add.image(x, y, foe ? 'eb' : 'pb').setRotation(a).setDepth(3);
+    const img = this.add.image(x, y, foe ? 'eb' : 'pb').setRotation(a).setDepth(3).setBlendMode(1);
     this.bullets.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, foe, img });
+    this.flare(x + Math.cos(a) * 6, y + Math.sin(a) * 6, foe ? 0xff9a3c : 0xcff6ff, 0.5, 70);
   }
   kill(e) {
-    const sur = e.stun > 0;
+    const sur = e.stun > 0, d = this.decal;
     this.enemies.splice(this.enemies.indexOf(e), 1);
     e.img.destroy();
-    this.blood.explode(14, e.x, e.y);
-    this.decal.fillStyle(0x8a1026, 0.5).fillCircle(e.x, e.y, 7 + Math.random() * 6);
+    this.blood.explode(18, e.x, e.y);
+    this.flare(e.x, e.y, 0xff3355, 1.6, 200);
+    // What stays on the floor: a body and its blood.
+    d.fillStyle(0x7a0c1e, 0.55);
+    for (let i = 0; i < 4; i++) d.fillCircle(e.x + Phaser.Math.Between(-12, 12), e.y + Phaser.Math.Between(-12, 12), Phaser.Math.Between(3, 8));
+    d.fillStyle([0x5a1018, 0x6b5a10, 0x55103f][e.k], 0.9).fillEllipse(e.x, e.y, 17, 12);
     tone(this, 220, 90, 'square', 0.06, 70);
     if (e.k === 2) this.score += TUNE.rushKill;
     else {
       this.mult = sur ? Math.min(TUNE.multMax, this.mult + 1) : 1;
       this.score += TUNE.kill * this.mult;
-      if (sur) this.pop(e.x, e.y - 14, 'x' + this.mult, '#ffe14a');
+      if (sur) this.pop(e.x, e.y - 16, 'x' + this.mult, '#ffe14a', 22);
     }
     if (e.room >= 0 && !--this.rooms[e.room].left) {
       const R = this.rooms[e.room];
       R.st = 2; this.cleared++; this.score += TUNE.clear;
-      this.pop((R.x0 + 6) * T, (R.y0 + 6) * T, 'CLEAR +' + TUNE.clear, '#35d07f');
+      this.drawMap();
+      this.pop((R.x0 + 6) * T, (R.y0 + 6) * T, 'ROOM CLEAR +' + TUNE.clear, '#35d07f', 24);
       [523, 659, 784].forEach((f, i) => this.time.delayedCall(i * 70, () => tone(this, f, 160, 'triangle', 0.07)));
     }
   }
@@ -406,22 +475,27 @@ class Play extends Phaser.Scene {
   die() {
     const p = this.p;
     this.over = true; this.overT = 700; flush();
-    p.img.setVisible(false); this.blood.explode(40, p.x, p.y);
+    p.img.setVisible(false); this.light.setVisible(false); this.blood.explode(50, p.x, p.y);
     this.cameras.main.shake(400, 0.02);
     tone(this, 200, 700, 'sawtooth', 0.18, 40);
     if (this.score > best) { best = this.score; getStorage().set(BEST_KEY, best); }
+    this.banner.setVisible(false); if (this.hint) this.hint.setVisible(false);
     this.add.rectangle(0, 0, W, H, 0x000000, 0.6).setOrigin(0).setDepth(11);
-    label(this, W / 2, 220, 'OPERATOR DOWN', 56, '#ff4455').setDepth(12);
+    label(this, W / 2, 220, 'OPERATOR DOWN', 56, '#ff4455').setDepth(12).setShadow(0, 0, '#ff4455', 18, true, true);
     label(this, W / 2, 300, 'SCORE ' + this.score + '    FLOOR ' + this.floor, 28).setDepth(12);
     label(this, W / 2, 345, 'BEST ' + best, 24, '#ffe14a').setDepth(12);
     label(this, W / 2, 420, 'B1 / START: GO AGAIN        B2: MENU', 20, '#9fb6d6').setDepth(12);
   }
   boom(x, y) {
     const K = KITS[kit], p = this.p;
-    this.rings.push({ x, y, r: K.r, t: 320, c: K.c });
+    // Each grenade looks different: white burst, blue shock rings, orange fireball with a scorch mark.
+    for (let i = 0; i < (K.kb ? 3 : 1); i++) this.rings.push({ x, y, r: K.r, t: 320 + i * 90, c: K.c });
+    this.flare(x, y, K.c, (K.r * 3) / 64, K.kill ? 450 : 320);
     this.cameras.main.shake(K.kill ? 320 : 180, K.kill ? 0.02 : 0.01);
     tone(this, K.kill ? 110 : 1900, 420, K.kill ? 'sawtooth' : 'sine', 0.2, K.kill ? 30 : 500);
-    this.sparks.explode(26, x, y);
+    this.sparks.explode(K.kill ? 60 : 26, x, y);
+    if (K.kill) this.decal.fillStyle(0x000000, 0.5).fillCircle(x, y, K.r * 0.5);
+    else if (!K.kb) this.cameras.main.flash(90, 255, 255, 255);
     if (K.door) for (const d of this.doors) if (Math.hypot(d.x - x, d.y - y) < K.r) this.openDoor(d);
     for (const e of this.enemies.slice()) {
       const d = Math.hypot(e.x - x, e.y - y);
@@ -433,24 +507,30 @@ class Play extends Phaser.Scene {
     const d = Math.hypot(p.x - x, p.y - y);
     if (d < K.r && this.los(x, y, p.x, p.y)) {
       if (K.kill) this.hurt();
-      else if (K.kb) { p.kx = ((p.x - x) / (d || 1)) * K.kb; p.ky = ((p.y - y) / (d || 1)) * K.kb; p.slow = 1500; }
-      else this.blind = 1600;
+      else if (K.kb) { p.kx = ((p.x - x) / (d || 1)) * K.kb; p.ky = ((p.y - y) / (d || 1)) * K.kb; p.slow = 1500; this.pop(p.x, p.y - 20, 'DAZED', '#66ccff', 20); }
+      else this.blind = TUNE.blindMs;
     }
   }
 
   // ---- Feedback ----
   say(s, color) {
     this.tweens.killTweensOf(this.banner);
-    this.banner.setText(s).setColor(color).setAlpha(1);
+    this.banner.setText(s).setColor(color).setAlpha(1).setScale(1.4);
+    this.tweens.add({ targets: this.banner, scale: 1, duration: 180 });
     this.tweens.add({ targets: this.banner, alpha: 0, delay: 800, duration: 400 });
   }
-  pop(x, y, s, color) {
-    const t = label(this, x, y, s, 16, color).setDepth(11);
-    this.tweens.add({ targets: t, y: y - 28, alpha: 0, duration: 750, onComplete: () => t.destroy() });
+  pop(x, y, s, color, size) {
+    const t = label(this, x, y, s, size || 16, color).setDepth(11).setShadow(0, 0, '#000000', 6, true, true);
+    this.tweens.add({ targets: t, y: y - 30, alpha: 0, duration: 850, onComplete: () => t.destroy() });
+  }
+  // A burst of light that swells and fades: muzzle flashes, kicked doors, kills, explosions.
+  flare(x, y, tint, scale, ms) {
+    const g = this.add.image(x, y, 'glow').setDepth(6).setBlendMode(1).setTint(tint).setScale(scale * 0.35);
+    this.tweens.add({ targets: g, scale, alpha: 0, duration: ms, onComplete: () => g.destroy() });
   }
 
   update(time, delta) {
-    const rdt = Math.min(delta, 50), p = this.p, fx = this.fx.clear();
+    const rdt = Math.min(delta, 50), p = this.p, fx = this.fx.clear(), E = this.enemies, K = KITS[kit];
     if (this.over) {
       if ((this.overT -= rdt) < 0) {
         if (take('START1') || take('P1_1')) this.scene.restart();
@@ -480,18 +560,40 @@ class Play extends Phaser.Scene {
     }
     if (p.slow > 0) p.slow -= dt;
     if (p.inv > 0) p.inv -= dt;
+    // Aim assist: among enemies in sight, take the one nearest to where you face.
+    let aim = p.ang, tgt = null, near = TUNE.assist;
+    for (const e of E) {
+      if (e.room >= 0 && !this.rooms[e.room].st) continue;
+      const a = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(e.y - p.y, e.x - p.x) - p.ang));
+      if (a < near && this.los(p.x, p.y, e.x, e.y)) { near = a; tgt = e; }
+    }
+    if (tgt) aim = Math.atan2(tgt.y - p.y, tgt.x - p.x);
+    const ca = Math.cos(aim), sa = Math.sin(aim);
+    // Laser sight: shows exactly where the next shot goes, and rings the enemy it will hit.
+    let lx = p.x, ly = p.y;
+    for (let d = 0; d < TUNE.laser && !this.solid(lx + ca * 8, ly + sa * 8); d += 8) { lx += ca * 8; ly += sa * 8; }
+    fx.lineStyle(1, 0x39e6ff, 0.4).lineBetween(p.x + ca * 16, p.y + sa * 16, lx, ly);
+    if (tgt) fx.lineStyle(2, 0x39e6ff, 0.9).strokeCircle(tgt.x, tgt.y, 15);
     if ((p.cd -= dt) <= 0 && held.P1_1) {
       p.cd = TUNE.fireMs;
-      this.shoot(p.x + Math.cos(p.ang) * 10, p.y + Math.sin(p.ang) * 10, p.ang, TUNE.bullet, false);
+      this.shoot(p.x + ca * 10, p.y + sa * 10, aim, TUNE.bullet, false);
       tone(this, 880, 45, 'square', 0.03, 300);
     }
-    if (take('P1_2') && this.nadeN > 0) {
-      this.nadeN--;
-      const img = this.add.image(p.x, p.y, 'nade').setDepth(3).setTint(KITS[kit].c);
-      this.nades.push({ x: p.x, y: p.y, vx: Math.cos(p.ang) * TUNE.throwSpeed, vy: Math.sin(p.ang) * TUNE.throwSpeed, t: TUNE.fuseMs, img });
-      tone(this, 300, 90, 'triangle', 0.06, 600);
+    // Where a grenade thrown now would go off, and how far its blast reaches.
+    if (this.nadeN > 0) {
+      const q = { x: p.x, y: p.y, vx: Math.cos(p.ang) * TUNE.throwSpeed, vy: Math.sin(p.ang) * TUNE.throwSpeed };
+      for (let t = 0; t < TUNE.fuseMs; t += 16) this.fly(q, 16);
+      fx.lineStyle(1, K.c, 0.22).strokeCircle(q.x, q.y, K.r).lineStyle(2, K.c, 0.5)
+        .lineBetween(q.x - 5, q.y - 5, q.x + 5, q.y + 5).lineBetween(q.x - 5, q.y + 5, q.x + 5, q.y - 5);
+      if (take('P1_2')) {
+        this.nadeN--;
+        const img = this.add.image(p.x, p.y, 'n' + kit).setDepth(6);
+        this.nades.push({ x: p.x, y: p.y, vx: Math.cos(p.ang) * TUNE.throwSpeed, vy: Math.sin(p.ang) * TUNE.throwSpeed, t: TUNE.fuseMs, img });
+        tone(this, 300, 90, 'triangle', 0.06, 600);
+      }
     }
-    p.img.setPosition(p.x, p.y).setRotation(p.ang).setAlpha(p.inv > 0 && (time / 60) % 2 < 1 ? 0.3 : 1);
+    p.img.setPosition(p.x, p.y).setRotation(aim).setAlpha(p.inv > 0 && (time / 60) % 2 < 1 ? 0.3 : 1);
+    this.light.setPosition(p.x, p.y);
 
     // ---- Horde: enters by the street door, one thug at a time ----
     if (this.pending > 0 && (this.spawnT -= dt) <= 0) {
@@ -504,7 +606,6 @@ class Play extends Phaser.Scene {
     }
 
     // ---- Enemies ----
-    const E = this.enemies;
     for (let i = E.length - 1; i >= 0; i--) {
       const e = E[i];
       if (e.room >= 0 && !this.rooms[e.room].st) continue; // still behind closed doors
@@ -517,7 +618,8 @@ class Play extends Phaser.Scene {
       if (e.stun > 0) {
         e.stun -= dt; e.ang += dt * 0.012; e.t = this.react;
         e.img.setAlpha(0.55 + 0.4 * Math.sin(time / 35));
-        fx.lineStyle(2, 0xffffff, 0.7).strokeCircle(e.x, e.y, 11);
+        // Stunned: stars circle his head.
+        for (let k = 0; k < 3; k++) fx.fillStyle(0xffffff, 0.9).fillCircle(e.x + Math.cos(time / 110 + k * 2.1) * 13, e.y + Math.sin(time / 110 + k * 2.1) * 13, 2);
       } else {
         e.img.setAlpha(1);
         const see = dist < TUNE.sight && this.los(e.x, e.y, p.x, p.y);
@@ -526,11 +628,12 @@ class Play extends Phaser.Scene {
           if (dist < 15 && p.inv <= 0) { this.hurt(); e.kx = (-dx / (dist || 1)) * 260; e.ky = (-dy / (dist || 1)) * 260; }
         } else if (e.k === 1 && (e.seen || see)) {
           // The lookout calls for backup once he has seen you. Kill him before the bar fills.
+          if (!e.seen) this.pop(e.x, e.y - 30, 'CALLING BACKUP!', '#ffe14a', 18);
           e.seen = true; e.ang = Math.atan2(dy, dx);
-          if ((e.bt -= dt) <= 0) { e.bt = 280; tone(this, 1300, 50, 'square', 0.04); }
+          if ((e.bt -= dt) <= 0) { e.bt = 280; tone(this, 1300, 50, 'square', 0.04); this.flare(e.x, e.y, 0xffe14a, 1.5, 250); }
           if ((e.call += dt) >= this.callMs) { e.k = 0; e.img.setTexture('e0'); e.t = this.react; this.raise(); }
-          fx.fillStyle(0x000000, 0.7).fillRect(e.x - 15, e.y - 21, 30, 6)
-            .fillStyle(0xffe14a).fillRect(e.x - 14, e.y - 20, (28 * e.call) / this.callMs, 4);
+          fx.fillStyle(0x000000, 0.75).fillRect(e.x - 19, e.y - 25, 38, 8)
+            .fillStyle(0xffe14a).fillRect(e.x - 18, e.y - 24, (36 * e.call) / this.callMs, 6);
         } else if (e.k === 0) {
           if (see) {
             e.ang = Math.atan2(dy, dx);
@@ -549,7 +652,7 @@ class Play extends Phaser.Scene {
     // Keep bodies from stacking on one spot.
     for (let i = 0; i < E.length; i++) for (let j = i + 1; j < E.length; j++) {
       const a = E[i], b = E[j], dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
-      if (d < 13 && d > 0.01) { const k = (13 - d) / 2 / d; this.move(a, -dx * k, -dy * k, 7); this.move(b, dx * k, dy * k, 7); }
+      if (d < 15 && d > 0.01) { const k = (15 - d) / 2 / d; this.move(a, -dx * k, -dy * k, 7); this.move(b, dx * k, dy * k, 7); }
     }
 
     // ---- Bullets: short steps so a fast bullet never skips a wall ----
@@ -558,40 +661,38 @@ class Play extends Phaser.Scene {
       let dead = false;
       for (let k = 0; k < n && !dead; k++) {
         b.x += (b.vx * s) / n; b.y += (b.vy * s) / n;
-        if (this.solid(b.x, b.y)) { dead = true; this.sparks.explode(3, b.x, b.y); }
+        if (this.solid(b.x, b.y)) { dead = true; this.sparks.explode(4, b.x, b.y); }
         else if (b.foe) { if (Math.hypot(p.x - b.x, p.y - b.y) < 9) { dead = true; this.hurt(); } }
-        else for (const e of E) if (Math.hypot(e.x - b.x, e.y - b.y) < 11) { dead = true; this.kill(e); break; }
+        else for (const e of E) if (Math.hypot(e.x - b.x, e.y - b.y) < 12) { dead = true; this.kill(e); break; }
       }
       if (dead) { b.img.destroy(); this.bullets.splice(i, 1); } else b.img.setPosition(b.x, b.y);
     }
 
-    // ---- Grenades: bounce off walls, go off when the fuse ends ----
+    // ---- Grenades: thrown in an arc, bounce off walls, go off when the fuse ends ----
     for (let i = this.nades.length - 1; i >= 0; i--) {
-      const n = this.nades[i];
-      for (let k = 0; k < 4; k++) {
-        const dx = (n.vx * s) / 4, dy = (n.vy * s) / 4;
-        if (this.solid(n.x + dx, n.y)) n.vx *= -0.55; else n.x += dx;
-        if (this.solid(n.x, n.y + dy)) n.vy *= -0.55; else n.y += dy;
-      }
-      const fr = Math.max(0, 1 - dt * TUNE.friction); n.vx *= fr; n.vy *= fr;
-      n.img.setPosition(n.x, n.y).setScale(1 + 0.35 * Math.abs(Math.sin(n.t / 45)));
-      fx.lineStyle(1, KITS[kit].c, 0.25).strokeCircle(n.x, n.y, KITS[kit].r);
+      const n = this.nades[i], h = Math.sin((1 - n.t / TUNE.fuseMs) * Math.PI); // height of the arc, 0..1
+      this.fly(n, dt);
+      fx.fillStyle(0x000000, 0.4).fillEllipse(n.x, n.y + 2, 12, 6); // its shadow on the floor
+      fx.fillStyle(K.c, 0.08).fillCircle(n.x, n.y, K.r).lineStyle(2, K.c, 0.55 + 0.35 * Math.sin(time / 40)).strokeCircle(n.x, n.y, K.r);
+      n.img.setPosition(n.x, n.y - h * 14).setScale(1.3 + h).setRotation(n.t / 60);
       if ((n.t -= dt) <= 0) { n.img.destroy(); this.nades.splice(i, 1); this.boom(n.x, n.y); }
     }
 
     // ---- Effects and HUD ----
     for (let i = this.rings.length - 1; i >= 0; i--) {
       const r = this.rings[i], a = r.t / 320;
-      fx.fillStyle(r.c, a * 0.35).fillCircle(r.x, r.y, r.r).lineStyle(3, r.c, a).strokeCircle(r.x, r.y, r.r * (1.05 - a * 0.4));
+      if (a <= 1) fx.fillStyle(r.c, a * 0.3).fillCircle(r.x, r.y, r.r).lineStyle(4, r.c, a).strokeCircle(r.x, r.y, r.r * (1.05 - a * 0.5));
       if ((r.t -= rdt) <= 0) this.rings.splice(i, 1);
     }
-    if (this.slow > 0) fx.lineStyle(6, 0x39e6ff, 0.5).strokeRect(3, OY * T + 3, W - 6, FLOOR_ROWS * T - 6);
+    const top = OY * T + 4, tall = FLOOR_ROWS * T - 8;
+    if (this.slow > 0) fx.lineStyle(8, 0x39e6ff, 0.55).strokeRect(4, top, W - 8, tall);
+    else if (this.alarm) fx.lineStyle(8, 0xff2233, 0.45 + 0.3 * Math.sin(time / 120)).strokeRect(4, top, W - 8, tall);
     if (this.blind > 0) this.blind -= rdt;
-    this.white.setAlpha(Phaser.Math.Clamp(this.blind / 500, 0, 1));
+    this.white.setAlpha(Phaser.Math.Clamp(this.blind / 400, 0, 1));
     for (let i = 0; i < TUNE.hp; i++) fx.fillStyle(i < p.hp ? 0x39e6ff : 0x24344d).fillRect(250 + i * 20, 11, 15, 17);
+    for (let i = 0; i < TUNE.grenades; i++) fx.fillStyle(i < this.nadeN ? K.c : 0x24344d).fillCircle(W - 58 + i * 20, 20, 7);
     this.hudL.setText('SCORE ' + this.score + (this.mult > 1 ? '  x' + this.mult : ''));
     this.hudC.setText(this.alarm ? 'ALARM  FLOOR ' + this.floor : 'FLOOR ' + this.floor).setColor(this.alarm ? '#ff4455' : '#ffffff');
-    this.hudR.setText(KITS[kit].n + ' x' + this.nadeN);
 
     // ---- Floor cleared: every room empty and the horde dead ----
     if (this.winT > 0) { if ((this.winT -= rdt) <= 0) this.nextFloor(); }
