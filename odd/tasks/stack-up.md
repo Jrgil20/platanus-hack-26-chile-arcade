@@ -118,6 +118,11 @@ Two days: 14 and 15 November. The game is submittable after every task.
   smaller blast radii and shorter self-blind; brighter look (glowing characters, lit and
   cleared rooms, crates, light flares, bodies on the floor, alarm border, monitor overlay).
   Official size 22.83 KB. Scripted runs clean for all three grenades. **Not played yet.**
+- [x] **T2b — Improvement plan M1–M6 built.** inline, 15 November, on "perfecto implementa
+  esos 11kb". Score table with initials and run summary; pickups; heavy enemy, six cover
+  layouts, three floor palettes; hostages; noise-based sound and a bass line; two-player
+  co-op (`player_mode` now `two_player`). Real cost 7.46 KB against the 10.7 KB guessed.
+  **Not played yet; M7 (final pass) waits for the author's session.**
 - [ ] **T2 — The author plays; tuning round.** (S1, S5, S6) inline, 14–15 November. The author
   runs `npm run dev` and says what feels wrong; fixes are numbers in `TUNE` first, code second.
 - [ ] **T3 — Juice and sound pass.** (S1) inline, 15 November. Only what the play session asks for.
@@ -208,6 +213,7 @@ Total guessed: about 11 KB, half of what is free.
 | After | Official size | Free |
 |---|---|---|
 | Now (e27dcce) | 23.03 KB | 26.97 KB |
+| M1–M6 built in one pass (15 Nov) | 30.49 KB | 19.51 KB |
 
 ## Risks
 
@@ -261,3 +267,17 @@ Total guessed: about 11 KB, half of what is free.
   the floor, laser 330 -> 240 px; official size 23.03 KB. Not run in a browser, only syntax and
   the official checker.
 - L11 (2026-11-15): "crea un plan de mejora detalaldo" — the Improvement plan section above.
+- L12 (2026-11-15): "perfecto implementa esos 11kb" — taken as approval of M1–M7, co-op
+  included, since the 11 KB total counted it.
+- L13 (2026-11-15, evidence, one scripted run in headless Chrome, no uncaught error): 60
+  generated floors, 1601 enemies, none inside cover or unreachable, no blocked door, every room
+  with 100+ free tiles; player 2 joins with START2; a downed player returns on the next floor
+  with one hit; clearing rooms drops pickups and a grenade pickup raises the count 3 -> 4; three
+  hostages saved on a cleared floor; a flash on a hostage costs nothing, a frag costs 500;
+  initials entered with the stick are saved and read back from storage. Official checker
+  30.49 KB, all restrictions pass; `CABINET_KEYS` block identical to the starter's; cover
+  regenerated. Not checked by any script: balance for two players, sound levels, feel.
+- L14 (2026-11-15): differences from the written plan: each player carries a different grenade
+  (player 2 gets the next type after player 1's pick); the horde is 1.5x in co-op; grenades cap
+  at 5; in both hands of a scripted 2.4 s firefight no enemy died, because the aim assist now
+  only reaches 170 px — expected after the author's request, to be judged in play.

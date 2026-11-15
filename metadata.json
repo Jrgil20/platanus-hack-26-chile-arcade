@@ -1,5 +1,5 @@
 {
   "game_name": "STACK UP",
-  "description": "Asalto táctico visto desde arriba: patea la puerta, sorprende la sala y elimina al vigía antes de que pida refuerzos.",
-  "player_mode": "single_player"
+  "description": "Asalto táctico para 1 o 2 jugadores: patea la puerta, sorprende la sala y elimina al vigía antes de que pida refuerzos.",
+  "player_mode": "two_player"
 }
