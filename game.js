@@ -746,12 +746,11 @@ class Play extends Phaser.Scene {
       noise(this, n > 1 ? 160 : 70, n > 1 ? 0.22 : 0.12, n > 1 ? 1800 : 4500);
       tone(this, n > 1 ? 200 : 700, 40, 'square', 0.03, 120);
     }
-    // Where a grenade thrown now would go off, and how far its blast reaches.
+    // A small cross where a grenade thrown now would go off. The blast ring only shows once it is in the air.
     if (p.nadeN > 0) {
       const q = { x: p.x, y: p.y, vx: Math.cos(p.ang) * TUNE.throwSpeed, vy: Math.sin(p.ang) * TUNE.throwSpeed };
       for (let t = 0; t < TUNE.fuseMs; t += 16) this.fly(q, 16);
-      fx.lineStyle(1, K.c, 0.22).strokeCircle(q.x, q.y, K.r).lineStyle(2, K.c, 0.5)
-        .lineBetween(q.x - 5, q.y - 5, q.x + 5, q.y + 5).lineBetween(q.x - 5, q.y + 5, q.x + 5, q.y - 5);
+      fx.lineStyle(2, K.c, 0.45).lineBetween(q.x - 4, q.y - 4, q.x + 4, q.y + 4).lineBetween(q.x - 4, q.y + 4, q.x + 4, q.y - 4);
       if (thr) {
         p.nadeN--;
         const img = this.add.image(p.x, p.y, 'n' + p.k).setDepth(6);
