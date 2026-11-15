@@ -215,6 +215,7 @@ Total guessed: about 11 KB, half of what is free.
 | Now (e27dcce) | 23.03 KB | 26.97 KB |
 | M1–M6 built in one pass (15 Nov) | 30.49 KB | 19.51 KB |
 | Quiet entry (15 Nov) | 32.14 KB | 17.86 KB |
+| Door that opens gradually (15 Nov) | 33.32 KB | 16.68 KB |
 
 ## Risks
 
@@ -304,3 +305,17 @@ Total guessed: about 11 KB, half of what is free.
   opens it, the room is awake-quiet with 3 of 3 enemies unaware and hidden and 7 tiles seen
   from the side; in front of the door 72 tiles seen and all three spotted and frozen; one step
   inside 125 tiles. No uncaught error. Official size 32.14 KB. Not played.
+- L19 (2026-11-15): "haced los cambios" was misread as "merge to main" (main fast-forwarded to
+  18c3e58); the author meant the quiet entry, which he took for a proposal. Correction, verbatim:
+  "mejro un poco mas el auto aim, y el abrir silencioso se supone que abre mientras se va viendo
+  una abertura tactica".
+  **S9 rewritten.** The quiet door does not snap open: it swings open over `creakMs` 1600 ms
+  from the side the player stands on (tile 6, passable only to sight and shots through the gap
+  so far), and the view into the room widens with the gap; a triangle from the player through
+  the gap edges is drawn while he stands near the door. The player cannot walk through until it
+  is fully open. Aim assist raised to `assist` 0.1 rad each side, `assistRange` 130.
+- L20 (2026-11-15, evidence, two scripted runs, no uncaught error): after the press the door
+  tiles are 6; opening 0.27 at 400 ms with 25–36 room tiles seen, 0.53 at 800 ms with 62, fully
+  open (tiles 3) by 2000 ms with 77; pushing into the half-open door moves the player only up
+  to it (12 px), walking through once open moves him 74 px; enemies are spotted one by one as
+  the gap grows. Official size 33.32 KB. Not played.

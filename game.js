@@ -70,11 +70,11 @@ const TUNE = {
   speed: 185, fireMs: 150, bullet: 640, hp: 3, invulnMs: 1000,
   // Aim assist: a shot goes to the visible enemy nearest to where you face, inside a triangle
   // this wide (radians each side) and this long (pixels). Beyond it you aim by hand.
-  assist: 0.05, assistRange: 110, laser: 150,
+  assist: 0.1, assistRange: 130, laser: 150,
   // Surprise: how long a freshly kicked room cannot act, and the slow motion that goes with it.
   surpriseMs: 800, slowMs: 550, slowScale: 0.35,
   // Quiet entry: how close to a door button 3 works, and how long an enemy caught unaware stays frozen.
-  doorReach: 46, peekMs: 600,
+  doorReach: 46, peekMs: 600, creakMs: 1600, // creakMs: how long the door takes to swing fully open
   // Enemy reaction time is the main difficulty number; each *Step applies per floor.
   reactMs: 520, reactStep: 50, reactMin: 220,
   eFireMs: 900, eFireStep: 60, eFireMin: 450,
@@ -339,7 +339,7 @@ class Play extends Phaser.Scene {
     this.enemies = []; this.bullets = []; this.nades = []; this.rings = []; this.picks = [];
     this.decal.clear();
     this.alarm = false; this.pending = 0; this.spawnT = 0; this.floorT = 0; this.cleared = 0; this.flowT = 0;
-    this.quiet = 0; this.seen.fill(0);
+    this.quiet = 0; this.seen.fill(0); this.ajar = [];
     this.react = Math.max(TUNE.reactMin, TUNE.reactMs - TUNE.reactStep * s);
     this.eFire = Math.max(TUNE.eFireMin, TUNE.eFireMs - TUNE.eFireStep * s);
     this.eBullet = TUNE.eBullet + TUNE.eBulletStep * s;
@@ -377,7 +377,8 @@ class Play extends Phaser.Scene {
       const ra = find(a), rb = find(b);
       if (ra === rb && Math.random() > TUNE.extraDoor) continue;
       set[ra] = rb;
-      const A = this.rooms[a], k = B(1, 9), d = { tiles: [], a, b, open: false, x: 0, y: 0 };
+      const A = this.rooms[a], k = B(1, 9), d = { tiles: [], a, b, open: false, x: 0, y: 0, v: b === a + 1, lo: (b === a + 1 ? A.y0 + k : A.x0 + k) * T, o: 0, hi: 0, ct: 0, q: 0 };
+      // v: the door runs along y. lo: where it starts on that axis. o: how far it has opened, 0..1. hi: it opens from its far end.
       for (let j = 0; j < 2; j++) {
         const tx = b === a + 1 ? A.x0 + 12 : A.x0 + k + j, ty = b === a + 1 ? A.y0 + k + j : A.y0 + 12, t = idx(tx, ty);
         g[t] = 2; this.doorAt[t] = d; d.tiles.push(t);
@@ -450,7 +451,9 @@ class Play extends Phaser.Scene {
   }
 
   // ---- Grid queries ----
-  solid(x, y) { const t = this.grid[idx((x / T) | 0, (y / T) | 0)]; return t !== 0 && t !== 3; }
+  solid(x, y) { const i = idx((x / T) | 0, (y / T) | 0), t = this.grid[i]; return t === 6 ? this.shut(i, x, y) : t !== 0 && t !== 3; }
+  // A door still swinging open (tile 6) only lets through what fits in the gap so far.
+  shut(i, x, y) { const d = this.doorAt[i], c = d.v ? y : x, w = d.o * 2 * T; return d.hi ? d.lo + 2 * T - c >= w : c - d.lo >= w; }
   // A body of half-size r at x,y. Remembers a closed door it touched, for the kick.
   blocked(x, y, r) {
     let b = false;
@@ -526,12 +529,13 @@ class Play extends Phaser.Scene {
   }
   // The quiet entry: the door swings open without a sound and the room stays dark. Nobody inside
   // knows yet; each of them only reacts once there is a clear line between him and a player.
-  sneak(d) {
+  sneak(d, p) {
     if (d.open) return;
     d.open = true;
-    for (const t of d.tiles) this.grid[t] = 3;
-    this.flowT = 0;
-    tone(this, 240, 180, 'sine', 0.05, 170);
+    // It swings open little by little, starting from the side the player stands on, and the
+    // view into the room widens with the gap.
+    for (const t of d.tiles) this.grid[t] = 6;
+    d.o = 0; d.q = 1; d.hi = (d.v ? p.y : p.x) > d.lo + T; this.ajar.push(d);
     for (const i of [d.a, d.b]) {
       const R = this.rooms[i];
       if (R.st) continue;
@@ -744,7 +748,7 @@ class Play extends Phaser.Scene {
     const b3 = take(c + '3');
     for (const d of this.doors) if (!d.open && Math.hypot(d.x - p.x, d.y - p.y) < TUNE.doorReach) {
       this.tip.setPosition(Phaser.Math.Clamp(d.x, 70, W - 70), d.y - 24).setVisible(true);
-      if (b3) this.sneak(d);
+      if (b3) this.sneak(d, p);
     }
     if (p.kx || p.ky) {
       this.move(p, p.kx * s, p.ky * s, 7);
@@ -922,6 +926,19 @@ class Play extends Phaser.Scene {
       if ((n.t -= dt) <= 0) { n.img.destroy(); this.nades.splice(i, 1); this.boom(n.x, n.y, K); }
     }
 
+    // ---- Doors being opened quietly: the gap grows a little every frame ----
+    for (let i = this.ajar.length - 1; i >= 0; i--) {
+      const d = this.ajar[i], t0 = d.tiles[0], wx = (t0 % COLS) * T, wy = ((t0 / COLS) | 0) * T;
+      if ((d.o += dt / TUNE.creakMs) >= 1) {
+        for (const t of d.tiles) this.grid[t] = 3;
+        this.ajar.splice(i, 1); this.flowT = 0; this.drawMap();
+        continue;
+      }
+      if ((d.ct -= dt) <= 0) { d.ct = 170; tone(this, 80 + d.o * 50, 70, 'sawtooth', 0.02); }
+      const w = (1 - d.o) * 2 * T, c = d.hi ? d.lo : d.lo + d.o * 2 * T; // the part still shut
+      fx.fillStyle(0xffb020).fillRect(d.v ? wx + 1 : c, d.v ? c : wy + 1, d.v ? T - 2 : w, d.v ? w : T - 2);
+    }
+
     // ---- Quietly opened rooms: lit only where a player sees right now, dim where he has already looked ----
     const fg = this.fogG.clear();
     if (this.quiet) {
@@ -929,14 +946,30 @@ class Play extends Phaser.Scene {
       for (const p of ps) if (p.in && !p.down) for (let a = 0; a < 6.283; a += 0.035) {
         const cx = Math.cos(a) * 6, cy = Math.sin(a) * 6;
         for (let x = p.x, y = p.y, n = 0; n < 75; n++, x += cx, y += cy) {
-          const t = idx((x / T) | 0, (y / T) | 0), v = g[t];
-          if (v === 0 || v === 3 || v === 5) { this.visF[t] = F; this.seen[t] = 1; }
-          if (v !== 0 && v !== 3) break;
+          const t = idx((x / T) | 0, (y / T) | 0), v = g[t], b = v === 6 ? this.shut(t, x, y) : v !== 0 && v !== 3;
+          if (!b || v === 5) { this.visF[t] = F; this.seen[t] = 1; }
+          if (b) break;
         }
       }
       for (const R of this.rooms) if (R.q) for (let y = 0; y < 12; y++) for (let x = 0; x < 12; x++) {
         const t = idx(R.x0 + x, R.y0 + y);
         if (this.visF[t] !== F) fg.fillStyle(0x04070d, this.seen[t] ? 0.5 : 0.97).fillRect((R.x0 + x) * T, (R.y0 + y) * T, T, T);
+      }
+      // The triangle of view through each quietly opened door, drawn from a player standing near it.
+      for (const d of this.doors) if (d.q && (this.rooms[d.a].q || this.rooms[d.b].q)) {
+        const w = Math.min(1, d.o) * 2 * T, c0 = (d.hi ? d.lo + 2 * T - w : d.lo) + 2, c1 = c0 + w - 4;
+        const t0 = d.tiles[0], m = (d.v ? t0 % COLS : (t0 / COLS) | 0) * T + T / 2;
+        for (const p of ps) if (p.in && !p.down && w > 6 && Math.hypot(d.x - p.x, d.y - p.y) < 170 && Math.abs((d.v ? p.x : p.y) - m) > T / 2) {
+          const end = (c) => { // from the player through one edge of the gap, until something stops it
+            let x = d.v ? m : c, y = d.v ? c : m;
+            const a = Math.atan2(y - p.y, x - p.x), ux = Math.cos(a) * 6, uy = Math.sin(a) * 6;
+            for (let n = 0; n < 45 && !this.solid(x + ux, y + uy); n++) { x += ux; y += uy; }
+            return [x, y];
+          };
+          const e0 = end(c0), e1 = end(c1);
+          fx.fillStyle(p.col, 0.08).fillTriangle(p.x, p.y, e0[0], e0[1], e1[0], e1[1])
+            .lineStyle(1, p.col, 0.5).lineBetween(p.x, p.y, e0[0], e0[1]).lineBetween(p.x, p.y, e1[0], e1[1]);
+        }
       }
     }
 
