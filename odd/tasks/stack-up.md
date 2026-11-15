@@ -123,6 +123,92 @@ Two days: 14 and 15 November. The game is submittable after every task.
 - [ ] **T3 — Juice and sound pass.** (S1) inline, 15 November. Only what the play session asks for.
 - [ ] **T4 — Submit.** The author presses Submit in the dev UI, 15 November.
 
+## Improvement plan (15 November)
+
+Asked for by the author: "crea un plan de mejora detalaldo", after "mejor mucho mejor, aun nos
+queda unos 20kb para meorar". Every item below is a proposal by Claude *(assumption)* until the
+author picks it. Nothing here is built.
+
+**Budget.** Official size now 23.03 KB of 50. Keep 5 KB of headroom, so about 22 KB to spend.
+The KB figure on each item is a rough guess to order the work, not a measurement; the official
+checker is run after every item and the ledger below is corrected with the real number.
+
+**Rules for every item.** One item at a time, in this order; the game stays submittable after
+each; each ends with: official checker, key block diff, a scripted run with no uncaught error,
+then the author plays and says keep, change or drop. Numbers go in `TUNE`.
+
+| # | Item | Why | Guess |
+|---|---|---|---|
+| M1 | Score table with initials, run summary | An arcade cabinet lives on the score table | 1.8 KB |
+| M2 | Pickups when a room is cleared | The Dead Ops part: a reward to grab, a reason to push on | 1.2 KB |
+| M3 | A third kind of enemy and varied rooms | Every room plays the same today | 2.0 KB |
+| M4 | Hostages | Makes the grenade choice tactical: flash is safe, frag is not | 1.2 KB |
+| M5 | Sound: noise shots and blasts, a bass line that speeds up on alarm | It is silent between shots; a cabinet needs presence | 1.5 KB |
+| M6 | Two-player co-op | Biggest draw on a two-stick cabinet; biggest risk | 3.0 KB |
+| M7 | Final pass: cover, texts, tuning from play | Ship | 0.5 KB |
+
+Total guessed: about 11 KB, half of what is free.
+
+### M1 — Score table with initials, run summary
+- Top 5 saved through the storage bridge as `[{ n, s, f }]` (initials, score, floor); every entry
+  validated on read (three letters, finite numbers), anything else dropped.
+- On game over with a top-5 score: pick three initials with the stick (up/down letter, right
+  next, `P1_1` confirm). Otherwise straight to the summary.
+- Summary on the game-over screen: floor reached, rooms cleared, silent floors, best multiplier.
+- Title shows the table instead of the single best score.
+- Check: scripted run writes a score, restarts and reads it back; a corrupted stored value does not crash.
+- The author judges: is entering initials quick enough to not break "one press and play again"?
+
+### M2 — Pickups when a room is cleared
+- Clearing a room drops one pickup in its centre for a few seconds: grenade (+1), armour (+1
+  hit, never above the maximum), or shotgun (five-pellet spread for a short time).
+- A surprised clear (every kill inside the surprise window) guarantees the better drops.
+- One table of rows `{ name, colour, weight, effect }`; drawn in code with its own glow.
+- Check: scripted clear spawns a pickup; walking over it applies the effect; it expires.
+- The author judges: do the drops pull you forward, or make the game too easy?
+
+### M3 — A third kind of enemy and varied rooms
+- Heavy: slow, takes three hits, fires a three-shot burst; at most one per room, from floor 2.
+- Five cover layouts instead of two random crate stacks: a centre block, a wall of crates with a
+  gap, corner stacks, a long table, scattered pillars. All keep doors and spawns clear.
+- A colour palette per floor (three palettes cycling) so a new floor looks new.
+- Check: scripted build of 50 floors: every room reachable, no enemy inside cover, no blocked door.
+- The author judges: do rooms now ask for different entries?
+
+### M4 — Hostages
+- From floor 2, some rooms hold one hostage (green, hands up, does not move).
+- Shooting or fragging a hostage costs score and resets the multiplier; flash and concussion do
+  not hurt them. Clearing the room with the hostage alive pays a bonus.
+- The aim assist never targets a hostage.
+- Check: scripted frag in a hostage room applies the penalty; flash does not.
+- The author judges: does it make you think before throwing, without slowing the game down?
+
+### M5 — Sound
+- One shared noise buffer for gunshots, explosions and door kicks (filtered bursts), kept
+  alongside the existing tones.
+- A four-note bass line on a timer: slow while unseen, fast and higher once the alarm is up,
+  silent on the title.
+- Check: no uncaught error with the audio context suspended (the cabinet may start it late).
+- The author judges: volume balance on real speakers; nothing a script can tell.
+
+### M6 — Two-player co-op (needs the author's decision first)
+- `START2` joins at any time; player 2 uses `P2_*` with the same two buttons.
+- Enemies target the nearest living player; the horde routes to the nearest; a downed player
+  comes back when the floor is cleared; the run ends when both are down.
+- `metadata.json` `player_mode` becomes `two_player`.
+- Cost and risk: every place that reads `this.p` changes; balance for two has to be played by
+  two people before the deadline. If it is not solid by the last day, it is dropped, not shipped half done.
+- Check: scripted run with both players: join, one down, floor clear revives, both down ends.
+
+### M7 — Final pass
+- Regenerate `cover.png`, review `metadata.json`, tune `TUNE` from the author's last session,
+  full scripted run, official checker, then the author presses Submit.
+
+### Ledger
+| After | Official size | Free |
+|---|---|---|
+| Now (e27dcce) | 23.03 KB | 26.97 KB |
+
 ## Risks
 
 - **Size.** Unknown until T0. Mitigation: measure after every task, cut in the order above.
@@ -169,3 +255,9 @@ Two days: 14 and 15 November. The game is submittable after every task.
   60 px away does; a concussion at 60 px shoves the player; a frag at 60 px costs one hit. Aim
   assist turned a shot 0.10 rad onto an enemy and killed it. Official checker 22.83 KB minified,
   all restrictions pass; `CABINET_KEYS` block identical to the starter's; cover 800x600, 192 KB.
+- L10 (2026-11-15, the author after the second session): "mejor mucho mejor, aun nos queda unos
+  20kb para meorar y el rango de auto aim es muy grande debe ser mas como un trangulo y mas
+  corto". Done in e27dcce: assist 0.6 -> 0.3 rad each side, new 170 px range, triangle drawn on
+  the floor, laser 330 -> 240 px; official size 23.03 KB. Not run in a browser, only syntax and
+  the official checker.
+- L11 (2026-11-15): "crea un plan de mejora detalaldo" — the Improvement plan section above.
