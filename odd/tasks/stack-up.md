@@ -216,6 +216,7 @@ Total guessed: about 11 KB, half of what is free.
 | M1–M6 built in one pass (15 Nov) | 30.49 KB | 19.51 KB |
 | Quiet entry (15 Nov) | 32.14 KB | 17.86 KB |
 | Door that opens gradually (15 Nov) | 33.32 KB | 16.68 KB |
+| Spanish text, view cones, takedown, how-to screen (15 Nov) | 36.25 KB | 13.75 KB |
 
 ## Risks
 
@@ -319,3 +320,22 @@ Total guessed: about 11 KB, half of what is free.
   open (tiles 3) by 2000 ms with 77; pushing into the half-open door moves the player only up
   to it (12 px), walking through once open moves him 74 px; enemies are spotted one by one as
   the gap grows. Official size 33.32 KB. Not played.
+- L21 (2026-11-15): the author asked what else could improve the game; Claude proposed five
+  items and recommended view cones with a silent takedown plus a how-to screen. Answer,
+  verbatim: "termina de afinarlo ademas casi todos los que lo usaran es en espanol cambia eso".
+  Taken as: build the two recommended items and put all on-screen text in Spanish.
+  **S10 — Spanish.** Every on-screen string is in neutral Spanish; code and comments stay in English.
+  **S11 — Stealth** *(assumptions)*: an unaware enemy looks from side to side and notices a
+  player only inside his cone (`fov` 0.7 rad each side, `coneR` 170 px, clear line needed); he
+  is shown, with his cone on the floor, only while a player has him in view; button 3 within
+  `takeR` 32 px takes him down silently and counts as a surprise kill; a player's shot wakes the
+  unaware within `hearR` 230 px, a blast within 1.3 times that.
+  **S12 — How-to screen** between the title and the game: kick, stealth, the lookout.
+  Not built from the proposal: boss floor, reinforced doors, extra impact effects.
+- L22 (2026-11-15, evidence, two scripted runs, no uncaught error): title -> how-to -> game;
+  door opened quietly, 4 of 4 unaware; standing 24 px behind one for 20 frames leaves him
+  unaware and shows "B3: DERRIBAR"; button 3 removes him, multiplier 1 -> 2, the rest stay
+  unaware; at another one's side, 40 px away with a clear line, he stays unaware; two others
+  noticed the player without any shot fired; 200 ms of fire wakes the remaining one. The test
+  found no clear spot in front of the chosen enemy (he faced a wall), so "seen from the front"
+  is shown only indirectly. Official size 36.25 KB; cover regenerated in Spanish. Not played.

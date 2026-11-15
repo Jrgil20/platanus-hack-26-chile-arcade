@@ -75,6 +75,9 @@ const TUNE = {
   surpriseMs: 800, slowMs: 550, slowScale: 0.35,
   // Quiet entry: how close to a door button 3 works, and how long an enemy caught unaware stays frozen.
   doorReach: 46, peekMs: 600, creakMs: 1600, // creakMs: how long the door takes to swing fully open
+  // Unaware enemies: half-width of their cone of view (radians), how far it reaches, how far
+  // gunfire is heard, and how close button 3 takes one down.
+  fov: 0.7, coneR: 170, hearR: 230, takeR: 32,
   // Enemy reaction time is the main difficulty number; each *Step applies per floor.
   reactMs: 520, reactStep: 50, reactMin: 220,
   eFireMs: 900, eFireStep: 60, eFireMin: 450,
@@ -97,11 +100,11 @@ const TUNE = {
 // Grenades: one system, one row each. Every effect also applies to the players.
 // r is the blast radius in pixels; rgb/body/band only colour the drawing.
 const KITS = [
-  { n: 'FLASH', d: 'BLINDS THE ROOM. SAFE FOR HOSTAGES.', c: 0xffffff, rgb: '255,255,255', body: '#c8d2dc', band: '#2f7bff', r: 80, stun: 2600 },
-  { n: 'CONC', d: 'STUNS, SHOVES AND BLOWS DOORS OPEN.', c: 0x66ccff, rgb: '102,204,255', body: '#2c5d7a', band: '#66ccff', r: 75, stun: 1400, kb: 300, door: 1 },
-  { n: 'FRAG', d: 'KILLS EVERYONE NEAR. BLOWS DOORS OPEN.', c: 0xffaa33, rgb: '255,170,51', body: '#3d5a2a', band: '#ffaa33', r: 70, kill: 1, door: 1 },
+  { n: 'FLASH', d: 'CIEGA LA SALA. NO DAÑA A LOS REHENES.', c: 0xffffff, rgb: '255,255,255', body: '#c8d2dc', band: '#2f7bff', r: 80, stun: 2600 },
+  { n: 'CHOQUE', d: 'ATURDE, EMPUJA Y REVIENTA PUERTAS.', c: 0x66ccff, rgb: '102,204,255', body: '#2c5d7a', band: '#66ccff', r: 75, stun: 1400, kb: 300, door: 1 },
+  { n: 'FRAG', d: 'MATA A TODOS CERCA. REVIENTA PUERTAS.', c: 0xffaa33, rgb: '255,170,51', body: '#3d5a2a', band: '#ffaa33', r: 70, kill: 1, door: 1 },
 ];
-const PICKS = ['+1 GRENADE', '+1 ARMOUR', 'SHOTGUN!'];
+const PICKS = ['+1 GRANADA', '+1 ARMADURA', '¡ESCOPETA!'];
 // Cover layouts as [x, y, w, h] blocks inside a 12x12 room; the two outer rings stay clear
 // so no door is ever blocked. Layout 0 (not listed) is two random stacks.
 const COVER = [
@@ -220,7 +223,7 @@ const SCORE_KEY = 'stack-up-scores';
 const clean = (v) => (Array.isArray(v) ? v : [])
   .filter((e) => e && /^[A-Z]{3}$/.test(e.n) && Number.isFinite(e.s) && Number.isFinite(e.f))
   .sort((a, b) => b.s - a.s).slice(0, 5);
-const table = () => scores.map((e, i) => (i + 1) + '. ' + e.n + ' ' + String(e.s).padStart(7) + '  F' + e.f).join('\n') || 'NO SCORES YET';
+const table = () => scores.map((e, i) => (i + 1) + '. ' + e.n + ' ' + String(e.s).padStart(7) + '  P' + e.f).join('\n') || 'AÚN SIN PUNTAJES';
 let scores = [], lastN = 'AAA', kit = 0, duo = false;
 
 class Title extends Phaser.Scene {
@@ -245,16 +248,16 @@ class Title extends Phaser.Scene {
 
     const title = label(this, W / 2, 78, 'STACK UP', 84, '#39e6ff').setShadow(0, 0, '#39e6ff', 24, true, true);
     this.tweens.add({ targets: title, scale: 1.03, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-    label(this, W / 2, 146, 'KICK THE DOOR. SURPRISE THE ROOM. STOP THE CALL.', 20, '#ffb020');
-    label(this, 600, 205, 'TOP OPERATORS', 20, '#ffe14a');
+    label(this, W / 2, 146, 'PATEA LA PUERTA. SORPRENDE LA SALA. CORTA LA LLAMADA.', 20, '#ffb020');
+    label(this, 600, 205, 'MEJORES OPERADORES', 20, '#ffe14a');
     this.tableText = label(this, 600, 222, table(), 19).setOrigin(0.5, 0).setLineSpacing(5);
     this.kitIcon = this.add.image(W / 2 - 190, 412, 'n0').setScale(2.6);
     this.kitText = label(this, W / 2, 412, '', 26);
     this.kitDesc = label(this, W / 2, 442, '', 16, '#9fb6d6');
-    const p = label(this, W / 2, 492, 'PRESS START', 32, '#ff4455');
+    const p = label(this, W / 2, 492, 'PULSA START', 32, '#ff4455');
     this.tweens.add({ targets: p, alpha: 0.15, duration: 500, yoyo: true, repeat: -1 });
-    label(this, W / 2, 532, '2 PLAYERS: PLAYER 2 PRESSES START, NOW OR ANY TIME', 16, '#8dff4a');
-    label(this, W / 2, 578, 'STICK: MOVE   B1: FIRE (HOLD: LOCK AIM)   B2: GRENADE   B3: QUIET DOOR', 14, '#5d7699');
+    label(this, W / 2, 532, '2 JUGADORES: EL JUGADOR 2 PULSA START, AHORA O CUANDO QUIERA', 16, '#8dff4a');
+    label(this, W / 2, 578, 'PALANCA: MOVER   B1: DISPARAR (MANTENER: FIJA MIRA)   B2: GRANADA   B3: SIGILO', 14, '#5d7699');
     crt(this);
     this.showKit();
     getStorage().get(SCORE_KEY).then((r) => {
@@ -263,13 +266,51 @@ class Title extends Phaser.Scene {
   }
   showKit() {
     this.kitIcon.setTexture('n' + kit);
-    this.kitText.setText('<  GRENADE: ' + KITS[kit].n + '  >');
-    this.kitDesc.setText(KITS[kit].d + '  A BAD THROW HITS YOU TOO.');
+    this.kitText.setText('<  GRANADA: ' + KITS[kit].n + '  >');
+    this.kitDesc.setText(KITS[kit].d + '  SI CAE CERCA, TAMBIÉN TE AFECTA.');
   }
   update() {
     const d = (any('R') ? 1 : 0) - (any('L') ? 1 : 0), two = take('START2');
     if (d) { kit = (kit + d + 3) % 3; this.showKit(); tone(this, 520, 60); }
-    if (two || take('START1') || take('P1_1')) { duo = !!two; tone(this, 660, 120); this.scene.start('play'); }
+    if (two || take('START1') || take('P1_1')) { duo = !!two; tone(this, 660, 120); this.scene.start('how'); }
+  }
+}
+
+// ---- How to play: three pictures, one press ----
+class How extends Phaser.Scene {
+  constructor() { super('how'); }
+  create() {
+    flush();
+    const g = this.add.graphics(), put = (x, y, k, r, sc) => this.add.image(x, y, k).setScale(sc || 1.8).setRotation(r || 0);
+    label(this, W / 2, 50, 'CÓMO SE JUEGA', 40, '#39e6ff').setShadow(0, 0, '#39e6ff', 16, true, true);
+    [
+      ['PATADA', 'CAMINA CONTRA LA PUERTA: ENTRAS CON RUIDO Y TODA LA SALA QUEDA SORPRENDIDA UN INSTANTE.'],
+      ['SIGILO: B3', 'AL LADO DE LA PUERTA, B3 LA ABRE DESPACIO. FUERA DE SU CONO NO TE VEN. B3 POR LA ESPALDA: DERRIBO SILENCIOSO.'],
+      ['EL VIGÍA', 'ELIMINA AL AMARILLO ANTES DE QUE LLENE SU BARRA. SI LLAMA, SUENA LA ALARMA Y LLEGA LA HORDA.'],
+    ].forEach(([h, s], i) => {
+      const x = 140 + i * 260;
+      g.fillStyle(0x14213b).fillRect(x - 115, 100, 230, 150).lineStyle(3, 0x6fb8ff).strokeRect(x - 115, 100, 230, 150);
+      label(this, x, 278, h, 24, '#ffb020');
+      label(this, x, 300, s, 15, '#cfe0f5').setOrigin(0.5, 0).setWordWrapWidth(225);
+    });
+    // 1: the kick
+    g.fillStyle(0xffb020).fillRect(137, 150, 6, 50);
+    put(150, 175, 'glow', 0, 1.6).setTint(0xffb020).setBlendMode(1); put(85, 175, 'p0'); put(200, 150, 'e0', 2.8); put(215, 205, 'e0', 3.5);
+    // 2: stealth: a cone of view, the operator behind it
+    g.fillStyle(0xffe14a, 0.25).fillTriangle(400, 175, 500, 120, 500, 230); put(400, 175, 'e0'); put(340, 175, 'p0');
+    // 3: the lookout, his call bar and the horde
+    put(620, 190, 'e1', 3.1); g.fillStyle(0x000000, 0.7).fillRect(592, 150, 56, 9).fillStyle(0xffe14a).fillRect(594, 152, 36, 5);
+    put(715, 150, 'e2', 2.7, 1.5); put(735, 195, 'e2', 3.1, 1.5); put(710, 228, 'e2', 3.4, 1.5);
+    label(this, W / 2, 440, 'B1 DISPARA (MANTENER: FIJA LA MIRA)     B2 GRANADA: TAMBIÉN TE AFECTA A TI', 15, '#9fb6d6');
+    label(this, W / 2, 466, 'NO LASTIMES A LOS REHENES     SALA DESPEJADA: RECOGE LO QUE DEJA', 15, '#9fb6d6');
+    const p = label(this, W / 2, 530, 'PULSA START', 32, '#ff4455');
+    this.tweens.add({ targets: p, alpha: 0.15, duration: 500, yoyo: true, repeat: -1 });
+    crt(this);
+  }
+  update() {
+    const two = take('START2');
+    if (two) duo = true;
+    if (two || take('START1') || any('1')) { tone(this, 660, 120); this.scene.start('play'); }
   }
 }
 
@@ -299,7 +340,7 @@ class Play extends Phaser.Scene {
     // Quietly opened rooms keep their own fog, tile by tile: seen = looked at once, visF = in view this frame.
     this.fogG = this.add.graphics().setDepth(5);
     this.seen = new Uint8Array(COLS * ROWS); this.visF = new Uint16Array(COLS * ROWS); this.frameN = 0;
-    this.tip = label(this, 0, 0, 'B3: OPEN QUIETLY', 13, '#ffb020').setDepth(11).setVisible(false);
+    this.tip = label(this, 0, 0, '', 13, '#ffb020').setDepth(11).setVisible(false); this.tipS = '';
     // Two operators; player 2 only takes part once he has pressed START. Each carries a different grenade.
     this.ps = [0, 1].map((i) => ({
       i, c: 'P' + (i + 1) + '_', k: (kit + i) % 3, col: i ? 0x8dff4a : 0x39e6ff, in: !i || duo, down: false,
@@ -313,14 +354,14 @@ class Play extends Phaser.Scene {
     this.hudL = hud(12, 9, 0, 20); this.hudC = hud(W / 2 - 40, 9, 0.5, 20);
     this.rowT = [0, 1].map((i) => hud(590, 5 + i * 17, 0, 13)); this.kitT = [0, 1].map((i) => hud(W - 8, 5 + i * 17, 1, 13));
     this.rows();
-    label(this, W / 2, 590, 'STICK: MOVE   B1: FIRE (HOLD: LOCK AIM)   B2: GRENADE   B3: QUIET DOOR', 13, '#3f5878').setDepth(10);
+    label(this, W / 2, 590, 'PALANCA: MOVER   B1: DISPARAR (MANTENER: FIJA MIRA)   B2: GRANADA   B3: SIGILO', 13, '#3f5878').setDepth(10);
     this.banner = label(this, W / 2, 300, '', 44).setDepth(11).setAlpha(0).setShadow(0, 0, '#000000', 8, true, true);
     crt(this);
     this.nextFloor();
   }
   rows() {
     this.ps.forEach((p, i) => {
-      this.rowT[i].setText(p.in ? 'P' + (i + 1) : 'P2: PRESS START').setColor(i ? '#8dff4a' : '#39e6ff');
+      this.rowT[i].setText(p.in ? 'J' + (i + 1) : 'J2: PULSA START').setColor(i ? '#8dff4a' : '#39e6ff');
       this.kitT[i].setText(p.in ? KITS[p.k].n : '');
     });
   }
@@ -328,7 +369,7 @@ class Play extends Phaser.Scene {
     const p = this.ps[1], a = this.ps[0];
     duo = p.in = true; p.x = a.x; p.y = a.y; p.ang = a.ang;
     p.img.setVisible(true); p.light.setVisible(true);
-    this.rows(); this.pop(p.x, p.y - 24, 'PLAYER 2 JOINED', '#8dff4a', 22);
+    this.rows(); this.pop(p.x, p.y - 24, 'JUGADOR 2 SE UNE', '#8dff4a', 22);
     tone(this, 660, 150, 'square', 0.07, 990);
   }
 
@@ -351,10 +392,10 @@ class Play extends Phaser.Scene {
       p.img.setVisible(true); p.light.setVisible(true);
     }
     this.build();
-    this.say('FLOOR ' + f, '#39e6ff');
+    this.say('PISO ' + f, '#39e6ff');
     tone(this, 440, 140, 'square', 0.06, 880);
     if (!s) {
-      const h = this.hint = label(this, W / 2, 346, 'WALK INTO A DOOR TO KICK IT IN\nOR STAND BY IT AND PRESS B3 TO OPEN IT QUIETLY', 18, '#ffb020').setDepth(11);
+      const h = this.hint = label(this, W / 2, 346, 'CAMINA CONTRA UNA PUERTA PARA PATEARLA\nO QUÉDATE A SU LADO Y PULSA B3 PARA ABRIRLA EN SILENCIO', 18, '#ffb020').setDepth(11);
       this.tweens.add({ targets: h, alpha: 0, delay: 3500, duration: 600 });
     }
   }
@@ -423,7 +464,7 @@ class Play extends Phaser.Scene {
     }
     const ang = Math.random() * 6.28;
     const img = this.add.image(x, y, 'e' + k).setDepth(3).setScale(k === 3 ? 1.5 : 1.2).setRotation(ang).setVisible(!R);
-    const e = { k, room, x, y, ang, stun: 0, t: 0, call: 0, bt: 0, bn: 0, seen: false, un: false, kx: 0, ky: 0, hp: k === 3 ? TUNE.heavyHp : 1, img };
+    const e = { k, room, x, y, ang, a0: ang, stun: 0, t: 0, call: 0, bt: 0, bn: 0, seen: false, un: false, kx: 0, ky: 0, hp: k === 3 ? TUNE.heavyHp : 1, img };
     if (k === 4) R.host = e; else if (R) R.left++;
     this.enemies.push(e);
   }
@@ -557,12 +598,24 @@ class Play extends Phaser.Scene {
     }
     return true;
   }
+  // Noise: everyone unaware within r hears it and turns to fight.
+  loud(x, y, r) {
+    for (const e of this.enemies) if (e.un && e.k !== 4 && Math.hypot(e.x - x, e.y - y) < r) {
+      e.un = false; e.t = this.react; e.img.setVisible(true);
+      this.pop(e.x, e.y - 20, '!', '#ff4455', 26);
+    }
+  }
+  // The small prompt over whatever button 3 would act on.
+  hint3(s, x, y) {
+    if (this.tipS !== s) this.tip.setText(this.tipS = s);
+    this.tip.setPosition(Phaser.Math.Clamp(x, 95, W - 95), y).setVisible(true);
+  }
   raise() {
     const n = this.alarm ? TUNE.hordeAgain + this.floor : TUNE.horde + TUNE.hordeStep * this.floor;
     this.pending += Math.round(n * (this.ps[1].in ? TUNE.hordeDuo : 1));
     this.alarm = true;
     for (const e of this.enemies) if (e.un) { e.un = false; e.img.setVisible(true); } // nobody is unaware any more
-    this.say('ALARM!', '#ff4455');
+    this.say('¡ALARMA!', '#ff4455');
     this.cameras.main.flash(200, 255, 40, 40);
   }
   clearRoom(R) {
@@ -570,13 +623,13 @@ class Play extends Phaser.Scene {
     if (R.q) { R.q = 0; this.quiet--; }
     this.drawMap();
     const cx = (R.x0 + 6) * T, cy = (R.y0 + 6) * T;
-    this.pop(cx, cy, 'ROOM CLEAR +' + TUNE.clear, '#35d07f', 24);
+    this.pop(cx, cy, 'SALA DESPEJADA +' + TUNE.clear, '#35d07f', 24);
     [523, 659, 784].forEach((f, i) => this.time.delayedCall(i * 70, () => tone(this, f, 160, 'triangle', 0.07)));
     const h = R.host;
     if (h) { // the hostage walks out alive
       R.host = null; this.score += TUNE.hostSave; this.savedN++;
       this.enemies.splice(this.enemies.indexOf(h), 1);
-      this.pop(h.x, h.y - 18, 'HOSTAGE SAFE +' + TUNE.hostSave, '#a0ffbe', 18);
+      this.pop(h.x, h.y - 18, 'REHÉN A SALVO +' + TUNE.hostSave, '#a0ffbe', 18);
       this.tweens.add({ targets: h.img, alpha: 0, duration: 600, onComplete: () => h.img.destroy() });
     }
     // The drop: a clean, all-surprise clear gives armour (if anyone is hurt) or the shotgun.
@@ -616,7 +669,7 @@ class Play extends Phaser.Scene {
     tone(this, 220, 90, 'square', 0.06, 70);
     if (e.k === 4) { // you shot the hostage
       R.host = null; this.mult = 1; this.score = Math.max(0, this.score - TUNE.hostPen);
-      this.pop(e.x, e.y - 18, 'HOSTAGE DOWN -' + TUNE.hostPen, '#ff4455', 20);
+      this.pop(e.x, e.y - 18, 'REHÉN CAÍDO -' + TUNE.hostPen, '#ff4455', 20);
       tone(this, 160, 500, 'sawtooth', 0.12, 50);
       return;
     }
@@ -638,7 +691,7 @@ class Play extends Phaser.Scene {
     p.down = true; p.img.setVisible(false); p.light.setVisible(false);
     this.blood.explode(50, p.x, p.y);
     this.decal.fillStyle(p.col, 0.5).fillEllipse(p.x, p.y, 18, 13);
-    if (this.ps.some((q) => q.in && !q.down)) this.pop(p.x, p.y - 20, 'P' + (p.i + 1) + ' DOWN - CLEAR THE FLOOR', '#ff4455', 18);
+    if (this.ps.some((q) => q.in && !q.down)) this.pop(p.x, p.y - 20, 'J' + (p.i + 1) + ' CAÍDO: DESPEJA EL PISO', '#ff4455', 18);
     else this.die();
   }
   die() {
@@ -648,16 +701,16 @@ class Play extends Phaser.Scene {
     tone(this, 200, 700, 'sawtooth', 0.18, 40);
     this.banner.setVisible(false); if (this.hint) this.hint.setVisible(false);
     this.add.rectangle(0, 0, W, H, 0x000000, 0.7).setOrigin(0).setDepth(11);
-    label(this, W / 2, 120, two ? 'TEAM DOWN' : 'OPERATOR DOWN', 56, '#ff4455').setDepth(12).setShadow(0, 0, '#ff4455', 18, true, true);
-    label(this, W / 2, 185, 'SCORE ' + S + '    FLOOR ' + this.floor, 28).setDepth(12);
-    label(this, W / 2, 225, 'ROOMS ' + this.roomsN + '   SILENT FLOORS ' + this.silentN + '   BEST COMBO x' + this.bestM + '   HOSTAGES ' + this.savedN, 15, '#9fb6d6').setDepth(12);
+    label(this, W / 2, 120, two ? 'EQUIPO CAÍDO' : 'OPERADOR CAÍDO', 56, '#ff4455').setDepth(12).setShadow(0, 0, '#ff4455', 18, true, true);
+    label(this, W / 2, 185, 'PUNTOS ' + S + '    PISO ' + this.floor, 28).setDepth(12);
+    label(this, W / 2, 225, 'SALAS ' + this.roomsN + '   PISOS EN SILENCIO ' + this.silentN + '   MEJOR COMBO x' + this.bestM + '   REHENES ' + this.savedN, 15, '#9fb6d6').setDepth(12);
     // A top-five score asks for three initials first.
     if (S > 0 && scores.filter((e) => e.s >= S).length < 5) {
       this.over = 1; this.nm = lastN.split(''); this.ci = 0;
       this.ini = [
-        label(this, W / 2, 300, 'TOP 5!  ENTER YOUR INITIALS', 22, '#ffe14a'),
+        label(this, W / 2, 300, '¡TOP 5!  INGRESA TUS INICIALES', 22, '#ffe14a'),
         label(this, W / 2, 360, '', 52, '#ffffff'),
-        label(this, W / 2, 420, 'STICK UP / DOWN: LETTER        B1: NEXT', 16, '#9fb6d6'),
+        label(this, W / 2, 420, 'PALANCA ARRIBA / ABAJO: LETRA        B1: SIGUIENTE', 16, '#9fb6d6'),
       ];
       this.ini.forEach((t) => t.setDepth(12));
       this.showIni();
@@ -665,9 +718,9 @@ class Play extends Phaser.Scene {
   }
   showIni() { this.ini[1].setText(this.nm.map((ch, i) => (i === this.ci ? '[' + ch + ']' : ' ' + ch + ' ')).join('')); }
   endUI() {
-    label(this, W / 2, 290, 'TOP OPERATORS', 20, '#ffe14a').setDepth(12);
+    label(this, W / 2, 290, 'MEJORES OPERADORES', 20, '#ffe14a').setDepth(12);
     label(this, W / 2, 308, table(), 19).setOrigin(0.5, 0).setLineSpacing(5).setDepth(12);
-    label(this, W / 2, 490, 'B1 / START: GO AGAIN        B2: MENU', 20, '#9fb6d6').setDepth(12);
+    label(this, W / 2, 490, 'B1 / START: OTRA VEZ        B2: MENÚ', 20, '#9fb6d6').setDepth(12);
   }
   // Game over: initials if the score earned them, then one press to play again.
   overTick(rdt) {
@@ -695,6 +748,7 @@ class Play extends Phaser.Scene {
     tone(this, K.kill ? 110 : 1900, 420, K.kill ? 'sawtooth' : 'sine', 0.14, K.kill ? 30 : 500);
     noise(this, K.kill ? 600 : 350, 0.3, K.kill ? 700 : 2500);
     this.sparks.explode(K.kill ? 60 : 26, x, y);
+    this.loud(x, y, TUNE.hearR * 1.3);
     if (K.kill) this.decal.fillStyle(0x000000, 0.5).fillCircle(x, y, K.r * 0.5);
     else if (!K.kb) this.cameras.main.flash(90, 255, 255, 255);
     if (K.door) for (const d of this.doors) if (Math.hypot(d.x - x, d.y - y) < K.r) this.openDoor(d);
@@ -711,7 +765,7 @@ class Play extends Phaser.Scene {
       const d = Math.hypot(p.x - x, p.y - y);
       if (!p.in || p.down || d > K.r || !this.los(x, y, p.x, p.y)) continue;
       if (K.kill) this.hurt(p);
-      else if (K.kb) { p.kx = ((p.x - x) / (d || 1)) * K.kb; p.ky = ((p.y - y) / (d || 1)) * K.kb; p.slow = 1500; this.pop(p.x, p.y - 20, 'DAZED', '#66ccff', 20); }
+      else if (K.kb) { p.kx = ((p.x - x) / (d || 1)) * K.kb; p.ky = ((p.y - y) / (d || 1)) * K.kb; p.slow = 1500; this.pop(p.x, p.y - 20, 'ATURDIDO', '#66ccff', 20); }
       else this.blind = TUNE.blindMs;
     }
   }
@@ -744,10 +798,21 @@ class Play extends Phaser.Scene {
       this.move(p, mx * sp, my * sp, 7);
       if (this.hitD) this.openDoor(this.hitD); // the kick: walk into a door and it bursts open
     }
-    // The other entry: standing by a closed door, button 3 opens it without waking the room.
-    const b3 = take(c + '3');
-    for (const d of this.doors) if (!d.open && Math.hypot(d.x - p.x, d.y - p.y) < TUNE.doorReach) {
-      this.tip.setPosition(Phaser.Math.Clamp(d.x, 70, W - 70), d.y - 24).setVisible(true);
+    // Button 3: take down an unaware enemy within reach without a sound; or, standing by a
+    // closed door, open it without waking the room.
+    let b3 = take(c + '3');
+    const prey = this.enemies.find((e) => e.un && e.k !== 4 && Math.hypot(e.x - p.x, e.y - p.y) < TUNE.takeR);
+    if (prey) {
+      this.hint3('B3: DERRIBAR', prey.x, prey.y - 26);
+      if (b3) {
+        b3 = 0; prey.stun = 1; // counts as a surprise kill
+        this.kill(prey);
+        this.pop(p.x, p.y - 26, 'DERRIBO SILENCIOSO', '#a0ffbe', 18);
+        tone(this, 140, 120, 'sine', 0.06, 70);
+      }
+    }
+    for (const d of this.doors) if (!prey && !d.open && Math.hypot(d.x - p.x, d.y - p.y) < TUNE.doorReach) {
+      this.hint3('B3: ABRIR EN SILENCIO', d.x, d.y - 24);
       if (b3) this.sneak(d, p);
     }
     if (p.kx || p.ky) {
@@ -779,6 +844,7 @@ class Play extends Phaser.Scene {
     if ((p.cd -= dt) <= 0 && fire) {
       const n = p.shot > 0 ? TUNE.pellets : 1;
       p.cd = n > 1 ? TUNE.shotFireMs : TUNE.fireMs;
+      this.loud(p.x, p.y, TUNE.hearR); // a shot ends the quiet
       for (let i = 0; i < n; i++) this.shoot(p.x + ca * 10, p.y + sa * 10, aim + (i - (n - 1) / 2) * TUNE.pelletSpread, TUNE.bullet, false);
       noise(this, n > 1 ? 160 : 70, n > 1 ? 0.22 : 0.12, n > 1 ? 1800 : 4500);
       tone(this, n > 1 ? 200 : 700, 40, 'square', 0.03, 120);
@@ -849,9 +915,15 @@ class Play extends Phaser.Scene {
     // ---- Enemies ----
     for (let i = E.length - 1; i >= 0; i--) {
       const e = E[i];
-      if (e.un) { // unaware in a quietly opened room: he reacts once a clear line reaches a player
-        if (!ps.some((p) => p.in && !p.down && Math.hypot(p.x - e.x, p.y - e.y) < TUNE.sight && this.los(p.x, p.y, e.x, e.y))) continue;
+      if (e.un) {
+        // Unaware in a quietly opened room. He looks slowly from side to side and only notices a
+        // player inside his cone of view: behind him you are safe. (A hostage notices anyone.)
+        if (e.k !== 4) { e.ang = e.a0 + Math.sin(time / 900 + e.a0 * 9) * 0.7; e.img.setRotation(e.ang); }
+        if (!ps.some((p) => p.in && !p.down && Math.hypot(p.x - e.x, p.y - e.y) < (e.k === 4 ? TUNE.sight : TUNE.coneR)
+          && (e.k === 4 || Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(p.y - e.y, p.x - e.x) - e.ang)) < TUNE.fov)
+          && this.los(p.x, p.y, e.x, e.y))) continue;
         e.un = false; e.stun = TUNE.peekMs; e.t = this.react; e.img.setVisible(true);
+        if (e.k !== 4) this.pop(e.x, e.y - 20, '!', '#ff4455', 26);
       }
       if (e.k === 4 || (e.room >= 0 && !this.rooms[e.room].st)) continue; // hostage, or still behind closed doors
       const q = this.target(e);
@@ -875,7 +947,7 @@ class Play extends Phaser.Scene {
         } else if (e.k === 1) {
           // The lookout calls for backup once he has seen you. Kill him before the bar fills.
           if (e.seen || see) {
-            if (!e.seen) this.pop(e.x, e.y - 30, 'CALLING BACKUP!', '#ffe14a', 18);
+            if (!e.seen) this.pop(e.x, e.y - 30, '¡PIDE REFUERZOS!', '#ffe14a', 18);
             e.seen = true; e.ang = Math.atan2(dy, dx);
             if ((e.bt -= dt) <= 0) { e.bt = 280; tone(this, 1300, 50, 'square', 0.04); this.flare(e.x, e.y, 0xffe14a, 1.5, 250); }
             if ((e.call += dt) >= this.callMs) { e.k = 0; e.img.setTexture('e0'); e.t = this.react; this.raise(); }
@@ -955,6 +1027,12 @@ class Play extends Phaser.Scene {
         const t = idx(R.x0 + x, R.y0 + y);
         if (this.visF[t] !== F) fg.fillStyle(0x04070d, this.seen[t] ? 0.5 : 0.97).fillRect((R.x0 + x) * T, (R.y0 + y) * T, T, T);
       }
+      // An unaware enemy shows only while a player has him in view, with his cone of view on the floor.
+      for (const e of E) if (e.un) {
+        const v = this.visF[idx((e.x / T) | 0, (e.y / T) | 0)] === F, a = e.ang - TUNE.fov, b = e.ang + TUNE.fov, r = TUNE.coneR;
+        e.img.setVisible(v);
+        if (v && e.k !== 4) fx.fillStyle(0xffe14a, 0.14).fillTriangle(e.x, e.y, e.x + Math.cos(a) * r, e.y + Math.sin(a) * r, e.x + Math.cos(b) * r, e.y + Math.sin(b) * r);
+      }
       // The triangle of view through each quietly opened door, drawn from a player standing near it.
       for (const d of this.doors) if (d.q && (this.rooms[d.a].q || this.rooms[d.b].q)) {
         const w = Math.min(1, d.o) * 2 * T, c0 = (d.hi ? d.lo + 2 * T - w : d.lo) + 2, c1 = c0 + w - 4;
@@ -990,8 +1068,8 @@ class Play extends Phaser.Scene {
       for (let j = 0; j < p.nadeN; j++) fx.fillStyle(KITS[p.k].c).fillCircle(668 + j * 12, y + 6, 4);
     }
     this.rowT[1].setAlpha(ps[1].in || (time / 400) % 2 < 1 ? 1 : 0.2);
-    this.hudL.setText('SCORE ' + this.score + (this.mult > 1 ? '  x' + this.mult : ''));
-    this.hudC.setText(this.alarm ? 'ALARM  FLOOR ' + this.floor : 'FLOOR ' + this.floor).setColor(this.alarm ? '#ff4455' : '#ffffff');
+    this.hudL.setText('PUNTOS ' + this.score + (this.mult > 1 ? '  x' + this.mult : ''));
+    this.hudC.setText(this.alarm ? 'ALARMA  PISO ' + this.floor : 'PISO ' + this.floor).setColor(this.alarm ? '#ff4455' : '#ffffff');
 
     // ---- Floor cleared: every room empty and the horde dead ----
     if (this.winT > 0) { if ((this.winT -= rdt) <= 0) this.nextFloor(); }
@@ -999,7 +1077,7 @@ class Play extends Phaser.Scene {
       const bonus = Math.max(0, Math.round(TUNE.floorBonus - (this.floorT / 1000) * TUNE.bonusPerSec)) + (this.alarm ? 0 : TUNE.silent);
       this.score += bonus; this.winT = 1700;
       if (!this.alarm) this.silentN++;
-      this.say((this.alarm ? 'FLOOR CLEAR +' : 'SILENT CLEAR +') + bonus, '#35d07f');
+      this.say((this.alarm ? 'PISO DESPEJADO +' : 'PISO EN SILENCIO +') + bonus, '#35d07f');
       [523, 659, 784, 1047].forEach((f, i) => this.time.delayedCall(i * 90, () => tone(this, f, 220, 'triangle', 0.08)));
     }
   }
@@ -1008,5 +1086,5 @@ class Play extends Phaser.Scene {
 new Phaser.Game({
   type: Phaser.AUTO, width: W, height: H, parent: 'game-root', backgroundColor: '#05080f',
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
-  scene: [Title, Play],
+  scene: [Title, How, Play],
 });
