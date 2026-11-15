@@ -70,7 +70,7 @@ const TUNE = {
   speed: 185, fireMs: 150, bullet: 640, hp: 3, invulnMs: 1000,
   // Aim assist: a shot goes to the visible enemy nearest to where you face, inside a triangle
   // this wide (radians each side) and this long (pixels). Beyond it you aim by hand.
-  assist: 0.2, assistRange: 110, laser: 150,
+  assist: 0.05, assistRange: 110, laser: 150,
   // Surprise: how long a freshly kicked room cannot act, and the slow motion that goes with it.
   surpriseMs: 800, slowMs: 550, slowScale: 0.35,
   // Enemy reaction time is the main difficulty number; each *Step applies per floor.
