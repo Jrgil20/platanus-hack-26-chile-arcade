@@ -66,8 +66,9 @@ function getStorage() {
 // ---- Tuning: every gameplay number lives here ----
 const TUNE = {
   speed: 185, fireMs: 150, bullet: 640, hp: 3, invulnMs: 1000,
-  // Aim assist: a shot goes to the visible enemy nearest to where you face, inside this cone (radians each side).
-  assist: 0.6, laser: 330,
+  // Aim assist: a shot goes to the visible enemy nearest to where you face, inside a triangle
+  // this wide (radians each side) and this long (pixels). Beyond it you aim by hand.
+  assist: 0.3, assistRange: 170, laser: 240,
   // Surprise: how long a freshly kicked room cannot act, and the slow motion that goes with it.
   surpriseMs: 800, slowMs: 550, slowScale: 0.35,
   // Enemy reaction time is the main difficulty number; each *Step applies per floor.
@@ -561,9 +562,12 @@ class Play extends Phaser.Scene {
     if (p.slow > 0) p.slow -= dt;
     if (p.inv > 0) p.inv -= dt;
     // Aim assist: among enemies in sight, take the one nearest to where you face.
+    // The assist only reaches inside a short triangle in front of you, drawn faintly on the floor.
     let aim = p.ang, tgt = null, near = TUNE.assist;
+    const AR = TUNE.assistRange, a1 = p.ang - near, a2 = p.ang + near;
+    fx.fillStyle(0x39e6ff, 0.07).fillTriangle(p.x, p.y, p.x + Math.cos(a1) * AR, p.y + Math.sin(a1) * AR, p.x + Math.cos(a2) * AR, p.y + Math.sin(a2) * AR);
     for (const e of E) {
-      if (e.room >= 0 && !this.rooms[e.room].st) continue;
+      if (e.room >= 0 && !this.rooms[e.room].st || Math.hypot(e.x - p.x, e.y - p.y) > AR) continue;
       const a = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(e.y - p.y, e.x - p.x) - p.ang));
       if (a < near && this.los(p.x, p.y, e.x, e.y)) { near = a; tgt = e; }
     }
